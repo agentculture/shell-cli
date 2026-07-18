@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-07-18
+
+### Added
+
+- **`shell explain safety`** — the guard-not-a-sandbox threat model is now readable in-band, so an agent can query the posture before deciding what to trust rather than inferring it from the package name.
+- **`docs/threat-model.md`** — assets and actors, a protected-vs-not table, the known bypasses (`sh -c`, shell expansion, here-docs, interpreters, symlink/TOCTOU), and what real isolation would actually require. Documents the contract the pending colleague extraction must uphold; the posture is inherited with the code and must not be upgraded in transit.
+- **`tests/test_honesty.py`** — a guard test making the safety disclaimer load-bearing rather than droppable prose. Asserts the posture is present in `learn` (text and the new `safety_posture` JSON field), the `explain` root, `explain safety`, `README.md`, `CLAUDE.md`, and `docs/threat-model.md`, and that no shipped surface makes a positive isolation claim.
+- **`CLAUDE.md`** — expanded from the self-init seed into a full runtime prompt (issue #1): the four non-negotiable constraints, the CLI contracts already enforced by tests, the verified extraction map into `colleague` 1.51.0 (handlers, safety helpers, and `policy.py` symbols with line numbers), the decoupling work that is the real difficulty, the planned VM/in-container backend, and the parked open questions.
+
+### Changed
+
+- **The CLI now names its own executable correctly.** argparse's `prog` was `shell-cli` while `[project.scripts]` installs `shell`, so `--help`, every `explain` body, and the `learn` text printed commands that do not exist (`uv run shell-cli whoami` failed outright). `prog`, all usage examples, the `cli overview` subject, and the `doctor` status line now say `shell`; `shell-cli` is retained only where it is genuinely the repo/PyPI distribution token. Both `explain shell` and `explain shell-cli` resolve to the root entry.
+- **CLI self-description now describes this agent, not the template it was cloned from.** `learn`, `explain`, and `overview` called shell-cli "a clonable template for AgentCulture mesh agents" and listed template-onboarding artifacts. They now state the actual mission (the file-and-shell tool surface), the safety posture, and an honest Status section recording that the six primitives, path confinement, and approval policy are not extracted yet. `overview` gains Mission and Status sections; `learn --json` gains `tool`/`distribution`/`safety_posture`/`status` fields.
+- **`README.md`** — rewritten around the mission, with the guard-not-a-sandbox warning promoted above the fold per the build brief, an explicit Status section, the two surfaces in priority order (library first), the four constraints, and a corrected quickstart.
+
 ## [0.6.0] - 2026-07-18
 
 ### Added

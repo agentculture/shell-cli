@@ -1,7 +1,8 @@
-"""``shell-cli overview`` — read-only descriptive snapshot of the agent.
+"""``shell overview`` — read-only descriptive snapshot of the agent.
 
-Describes the agent to an agent reader: identity (from culture.yaml), the verb
-surface, and the sibling-pattern artifacts this template carries. The shared
+Describes the agent to an agent reader: identity (from culture.yaml), the
+mission and current build status, the verb surface, and the artifacts this repo
+carries. The shared
 section/render helpers here are reused by the ``cli`` noun's ``overview`` (see
 :mod:`shell.cli._commands.cli`).
 
@@ -19,6 +20,7 @@ from shell.cli._output import emit_result
 
 _ARTIFACTS = [
     "culture.yaml + AGENTS.colleague.md — mesh identity (suffix + backend)",
+    "docs/threat-model.md — what the guard does and does not protect against",
     ".claude/skills/ — the canonical guildmaster skill kit (cite-don't-import)",
     "docs/skill-sources.md — skill provenance ledger",
     "pyproject.toml + .github/workflows/ — buildable, deployable package baseline",
@@ -30,6 +32,20 @@ _VERBS = [
     "explain <path> — markdown docs for a topic",
     "overview — this descriptive snapshot",
     "doctor — check the agent-identity invariants",
+]
+
+_MISSION = [
+    "owns the file-and-shell tool surface for AI coding agents",
+    "read / write / edit / list / view_media / run_command, gated",
+    "path confinement + operator approval policy travel with the primitives",
+    "pure-stdlib core (zero base dependencies) so any harness can import it",
+    "a guard, NOT a sandbox — see `shell explain safety`",
+]
+
+_STATUS = [
+    "scaffold — only the introspection verbs below are implemented",
+    "the six primitives, confinement, and policy are not extracted yet",
+    "tracking issue: https://github.com/agentculture/shell-cli/issues/1",
 ]
 
 
@@ -46,8 +62,10 @@ def agent_sections() -> list[dict[str, object]]:
                 f"model: {ident['model']}",
             ],
         },
+        {"title": "Mission", "items": list(_MISSION)},
+        {"title": "Status", "items": list(_STATUS)},
         {"title": "Verbs", "items": list(_VERBS)},
-        {"title": "Sibling-pattern artifacts", "items": list(_ARTIFACTS)},
+        {"title": "Artifacts", "items": list(_ARTIFACTS)},
     ]
 
 
@@ -61,9 +79,11 @@ def cli_sections() -> list[dict[str, object]]:
         {
             "title": "Conventions",
             "items": [
+                "the executable is `shell`; `shell-cli` is the repo + PyPI distribution",
                 "every command supports --json",
                 "results to stdout, errors/diagnostics to stderr (never mixed)",
                 "exit codes: 0 success, 1 user error, 2 environment error, 3+ reserved",
+                "write verbs are dry-run by default; --apply commits",
             ],
         },
     ]
