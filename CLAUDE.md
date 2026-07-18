@@ -22,11 +22,11 @@ Identity is settled and must not drift: repo token `shell-cli`, console command
 ### Current state
 
 The repo is **scaffold only**. The agent-first CLI skeleton (`whoami`, `learn`,
-`explain`, `overview`, `doctor`, `cli`) is real and green; **none of the six
-primitives, the path confinement, or the approval policy has been extracted
-yet.** Much of the CLI's self-description still calls this "a clonable template
-for AgentCulture mesh agents" — that is leftover scaffold prose, not the mission.
-Fix it as you touch it (see *Known scaffold drift* below).
+`explain`, `overview`, `doctor`, `cli`, `explain safety`) is real and green;
+**none of the six primitives, the path confinement, or the approval policy has
+been extracted yet.** The CLI says so itself — `learn`, `overview`, and the
+`explain` root each carry a Status section. Keep those honest as the extraction
+lands; they are the first thing an agent consumer reads.
 
 ## Commands
 
@@ -259,25 +259,19 @@ framing rather than a quick call.
    its copy, allow-lists `shell-cli` in its guard test, and keeps behaviour
    identical. colleague's change is colleague's to make — **propose, don't push.**
 
-## Known scaffold drift
+## Naming, and the prompt-file story
 
-Real inconsistencies in the tree right now. Fix them as you touch the
-surrounding code; don't treat them as intended behaviour.
-
-- **`shell` vs `shell-cli`.** The console script is `shell`
-  (`[project.scripts]`), but argparse's `prog` is `"shell-cli"`, so `--help`,
-  every `explain` catalog body, and the `learn` text all print commands
-  (`shell-cli whoami`) that do not exist as an executable. The README's
-  quickstart (`uv run shell-cli whoami`) fails outright.
-- **Scaffold self-description.** `learn`, `explain`, and `overview` describe this
-  repo as "a clonable template for AgentCulture mesh agents" and list
-  template-onboarding artifacts. That is the template it was cloned from, not
-  what this agent is.
-- **Prompt-file story.** `culture.yaml` declares `backend: colleague`, so
-  `doctor`'s backend-consistency check requires `AGENTS.colleague.md` — which
-  exists and passes. This `CLAUDE.md` is the Claude Code prompt and does **not**
-  change that mapping; keep both files, and keep them from contradicting each
-  other.
+- **`shell` is the executable; `shell-cli` is the repo, the agent nick, and the
+  PyPI distribution.** Both are correct in their own place, so neither is a
+  find-and-replace target. Usage examples, `prog`, and anything a reader might
+  paste into a terminal say `shell`. The nick reported by `whoami` (from
+  `culture.yaml`'s `suffix`), the distribution name, the Sonar project key, and
+  the GitHub URLs stay `shell-cli`. `explain` accepts both as the root path.
+- **Prompt files.** `culture.yaml` declares `backend: colleague`, so `doctor`'s
+  backend-consistency check requires `AGENTS.colleague.md` — which exists and
+  passes. This `CLAUDE.md` is the Claude Code prompt and the contributor guide;
+  it does **not** change that mapping. Keep both files, and keep them from
+  contradicting each other.
 
 ## Conventions and workflow
 

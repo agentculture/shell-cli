@@ -4,8 +4,9 @@ Reports the agent's identity as declared in ``culture.yaml``: its nick
 (``suffix``), the backend it runs on, and the served model (if any) — plus the
 package version. Read-only; touches nothing but its own ``culture.yaml``.
 
-When you clone this template, rename the package and update ``culture.yaml`` —
-``whoami`` then reflects your new agent's identity with no code change.
+The nick is the agent/repo token ``shell-cli``, which is deliberately NOT the
+executable name (``shell``) — see the Conventions section of ``shell cli
+overview``.
 """
 
 from __future__ import annotations
