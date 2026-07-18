@@ -62,7 +62,11 @@ def test_learn_text(capsys: pytest.CaptureFixture[str]) -> None:
     assert rc == 0
     out = capsys.readouterr().out
     assert len(out) >= 200
-    assert "shell-cli" in out
+    # Assert the command map names the real executable. This used to check for
+    # "shell-cli", which after the rename passes only incidentally via the issue
+    # URL in the body — a vestigial assertion that would survive the command map
+    # being dropped entirely.
+    assert "shell whoami" in out
     assert "Exit-code policy" in out
     assert "--json" in out
     assert "explain" in out

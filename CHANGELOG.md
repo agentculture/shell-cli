@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-07-18
+
+### Fixed
+
+- **`test_learn_text` no longer asserts a vestigial substring.** It checked `"shell-cli" in out`, which after the executable rename passes only incidentally via the GitHub issue URL in the `learn` body — the assertion would have survived the entire command map being deleted. It now asserts `"shell whoami"`, tying the test to the command map it is meant to cover. Found by a `colleague` review run (see agentculture/colleague#353).
+
 ## [0.7.0] - 2026-07-18
 
 ### Added
