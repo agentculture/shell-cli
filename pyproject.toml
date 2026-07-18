@@ -1,6 +1,6 @@
 [project]
 name = "shell-cli"
-version = "0.7.1"
+version = "0.7.2"
 description = "Agent-first CLI and agent owning the file-and-shell tool surface for AI coding agents: read, write, edit, list, view media, and gated shell execution, with path confinement and an operator approval policy. Pure-stdlib core, extracted from colleague so any host imports one safe execution layer."
 readme = "README.md"
 license = "Apache-2.0"

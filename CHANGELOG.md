@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.2] - 2026-07-18
+
+### Fixed
+
+- **The honesty guard no longer fires on honest text.** `tests/test_honesty.py`'s overclaim pattern matched negated phrasing — `"This is not fully isolated"`, `"Do not treat this as a sandbox"`, and `"It is never sandboxed"` all tripped it. A guard meant to catch overclaiming would have failed CI on wording that states the disclaimer *more* strongly, inverting its purpose. Matching is now negation-aware: candidates are discounted when a negator precedes them **in the same sentence**, so a disclaimer cannot excuse a genuine claim in the next sentence.
+- **Guard failures now name the offending text.** The pattern used capturing groups with `re.findall()`, so a failure reported tuples of fragments (`[('', '', '')]` for the `fully isolated` branch) instead of the matched phrase. Groups are now non-capturing and matching uses `finditer()` + `group(0)`. Also anchored `sandbox\b` so a match inside `sandboxed` reports `"sandboxed"` rather than the truncated `"is sandbox"`.
+- Added guard-the-guard coverage in both directions — 8 honest phrasings that must not trip it, 5 affirmative claims that must, plus sentence-boundary and failure-message regressions (23 new cases). Both findings raised by Qodo on PR #2.
+
 ## [0.7.1] - 2026-07-18
 
 ### Fixed
