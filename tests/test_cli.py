@@ -21,7 +21,7 @@ def test_version_flag(capsys: pytest.CaptureFixture[str]) -> None:
 def test_no_args_prints_help(capsys: pytest.CaptureFixture[str]) -> None:
     rc = main([])
     assert rc == 0
-    assert "usage: shell-cli" in capsys.readouterr().out
+    assert "usage: shell" in capsys.readouterr().out
 
 
 def test_unknown_command_errors(capsys: pytest.CaptureFixture[str]) -> None:
@@ -62,7 +62,11 @@ def test_learn_text(capsys: pytest.CaptureFixture[str]) -> None:
     assert rc == 0
     out = capsys.readouterr().out
     assert len(out) >= 200
-    assert "shell-cli" in out
+    # Assert the command map names the real executable. This used to check for
+    # "shell-cli", which after the rename passes only incidentally via the issue
+    # URL in the body — a vestigial assertion that would survive the command map
+    # being dropped entirely.
+    assert "shell whoami" in out
     assert "Exit-code policy" in out
     assert "--json" in out
     assert "explain" in out
@@ -72,7 +76,8 @@ def test_learn_json(capsys: pytest.CaptureFixture[str]) -> None:
     rc = main(["learn", "--json"])
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["tool"] == "shell-cli"
+    assert payload["tool"] == "shell"
+    assert payload["distribution"] == "shell-cli"
     assert payload["version"] == __version__
     assert payload["json_support"] is True
 
@@ -83,11 +88,11 @@ def test_learn_json(capsys: pytest.CaptureFixture[str]) -> None:
 def test_explain_root(capsys: pytest.CaptureFixture[str]) -> None:
     rc = main(["explain"])
     assert rc == 0
-    assert "# shell-cli" in capsys.readouterr().out
+    assert "# shell" in capsys.readouterr().out
 
 
 def test_explain_self(capsys: pytest.CaptureFixture[str]) -> None:
-    rc = main(["explain", "shell-cli"])
+    rc = main(["explain", "shell"])
     assert rc == 0
     assert capsys.readouterr().out.startswith("#")
 
@@ -97,7 +102,7 @@ def test_explain_json(capsys: pytest.CaptureFixture[str]) -> None:
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["path"] == ["whoami"]
-    assert "shell-cli whoami" in payload["markdown"]
+    assert "shell whoami" in payload["markdown"]
 
 
 def test_explain_unknown_path_errors(capsys: pytest.CaptureFixture[str]) -> None:

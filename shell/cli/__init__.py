@@ -1,4 +1,4 @@
-"""Unified CLI entry point for shell-cli.
+"""Unified CLI entry point for shell-cli (the ``shell`` executable).
 
 The agent-first global verbs (``whoami``, ``learn``, ``explain``, ``overview``,
 ``doctor``) are registered here under :mod:`shell.cli._commands`,
@@ -70,8 +70,12 @@ def _build_parser() -> argparse.ArgumentParser:
     from shell.cli._commands import whoami as _whoami_cmd
 
     parser = _CliArgumentParser(
-        prog="shell-cli",
-        description="shell-cli — a clonable template for AgentCulture mesh agents.",
+        prog="shell",
+        description=(
+            "shell — the file-and-shell tool surface for AI coding agents: "
+            "read, write, edit, list, view media, and gated shell execution. "
+            "A guard, not a sandbox — see `shell explain safety`."
+        ),
     )
     parser.add_argument(
         "--version",

@@ -1,4 +1,4 @@
-"""``shell-cli learn`` — the learnability affordance.
+"""``shell learn`` — the learnability affordance.
 
 Prints a structured self-teaching prompt. Must satisfy the agent-first rubric:
 >=200 chars and mention purpose, command map, exit codes, --json, and explain.
@@ -12,23 +12,37 @@ from shell import __version__
 from shell.cli._output import emit_result
 
 _TEXT = """\
-shell-cli — a clonable template for AgentCulture mesh agents.
+shell — the file-and-shell tool surface for AI coding agents.
 
 Purpose
 -------
-Scaffold for a new Culture mesh agent: an agent-first CLI (cited from the teken
-`python-cli` reference), an identity (culture.yaml + CLAUDE.md), the canonical
-guildmaster skill kit under .claude/skills/, and a deploy/CI baseline. Clone it,
-rename the package, and edit culture.yaml to mint a new agent.
+Read, write, edit, list, view media, and gated shell execution — with path
+confinement and an operator approval policy. Packaged pure-stdlib so any agent
+harness imports one safe execution layer instead of reimplementing it, and
+reimplementing its safety model with it. Extracted from `colleague`, which is
+the first consumer rather than the owner.
+
+Safety posture
+--------------
+A guard, NOT a sandbox. The execution gate is best-effort and is bypassable by
+`sh -c`, pipelines, and shell expansion. It protects against accidental and
+careless behaviour, not an adversarial one. Read `shell explain safety` before
+relying on it.
+
+Status
+------
+Scaffold: the six primitives, the path confinement, and the approval policy are
+not extracted yet. Only the introspection verbs below are implemented.
+See https://github.com/agentculture/shell-cli/issues/1
 
 Commands
 --------
-  shell-cli whoami             Identity from culture.yaml.
-  shell-cli learn              This self-teaching prompt.
-  shell-cli explain <path>...  Markdown docs for any noun/verb path.
-  shell-cli overview           Descriptive snapshot of the agent.
-  shell-cli doctor             Check the agent-identity invariants.
-  shell-cli cli overview       Describe the CLI surface itself.
+  shell whoami             Identity from culture.yaml.
+  shell learn              This self-teaching prompt.
+  shell explain <path>...  Markdown docs for any noun/verb path.
+  shell overview           Descriptive snapshot of the agent.
+  shell doctor             Check the agent-identity invariants.
+  shell cli overview       Describe the CLI surface itself.
 
 Machine-readable output
 -----------------------
@@ -44,15 +58,30 @@ Exit-code policy
 
 More detail
 -----------
-  shell-cli explain shell-cli
+  shell explain shell
+  shell explain safety
 """
 
 
 def _as_json_payload() -> dict[str, object]:
     return {
-        "tool": "shell-cli",
+        "tool": "shell",
+        "distribution": "shell-cli",
         "version": __version__,
-        "purpose": "Clonable scaffold for a new AgentCulture mesh agent.",
+        "purpose": (
+            "The file-and-shell tool surface for AI coding agents: read, write, edit, "
+            "list, view media, and gated shell execution, with path confinement and an "
+            "operator approval policy. Pure-stdlib core."
+        ),
+        "safety_posture": (
+            "A guard, not a sandbox. The execution gate is best-effort and bypassable "
+            "by `sh -c`, pipelines, and shell expansion; it protects against accidental "
+            "and careless behaviour, not an adversarial one."
+        ),
+        "status": (
+            "scaffold — the six primitives, path confinement, and approval policy are "
+            "not extracted yet; only the introspection verbs are implemented"
+        ),
         "commands": [
             {"path": ["whoami"], "summary": "Identity probe from culture.yaml."},
             {"path": ["learn"], "summary": "Self-teaching prompt."},
@@ -67,7 +96,7 @@ def _as_json_payload() -> dict[str, object]:
             "2": "environment/setup error",
         },
         "json_support": True,
-        "explain_pointer": "shell-cli explain <path>",
+        "explain_pointer": "shell explain <path>",
     }
 
 

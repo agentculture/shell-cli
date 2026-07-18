@@ -1,0 +1,198 @@
+"""Guard tests for the guard-not-a-sandbox honesty constraint.
+
+The mission (issue #1) commits shell-cli to an explicit posture: the execution
+gate is best-effort and bypassable, so nothing in the shipped surface may imply
+isolation the code does not provide. A package *named* shell-cli whose headline
+is safe execution will be read as offering a sandbox — these tests make the
+disclaimer load-bearing rather than a docstring someone can quietly drop.
+
+Two directions are guarded:
+
+1. The disclaimer is PRESENT in the surfaces an agent actually reads
+   (``learn``, ``explain`` root, ``explain safety``, README, threat model).
+2. No surface makes a POSITIVE isolation claim — the word "sandbox" may only
+   ever appear in a negating context.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from pathlib import Path
+
+import pytest
+
+from shell.cli import main
+from shell.explain.catalog import ENTRIES
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+
+# Phrasings that would claim isolation this package does not implement. Kept
+# deliberately narrow: the goal is to catch an affirmative claim, not to ban the
+# word (the honest disclaimer must be free to say "not a sandbox").
+#
+# Non-capturing groups throughout so ``finditer`` -> ``group(0)`` reports the
+# offending text itself; with capturing groups a failure would print tuples of
+# fragments (``[('', '', '')]``) and tell the reader nothing.
+_CLAIM = re.compile(
+    r"\b(?:is|as|provides?|offers?|ships?|implements?|guarantees?)\s+(?:an?\s+)?"
+    r"(?:secure\s+|safe\s+|real\s+)?sandbox\b"
+    r"|\bsandboxe[sd]\b"
+    r"|\bfully\s+isolated\b",
+    re.IGNORECASE,
+)
+
+# Words that turn one of the above into a disclaimer rather than a claim. This
+# guard must never fire on honest text — "it is never sandboxed" is the posture
+# stated *more* strongly, and failing CI over it would punish exactly the writing
+# this file exists to protect.
+_NEGATOR = re.compile(
+    r"\b(?:not|never|n't|no|nor|neither|without|rather\s+than|instead\s+of)\b",
+    re.IGNORECASE,
+)
+
+
+def overclaims(text: str) -> list[str]:
+    """Return affirmative isolation claims in *text*, as the matched substrings.
+
+    A match is discounted when a negator appears earlier **in the same
+    sentence**. Negation is checked over that window rather than as a regex
+    lookbehind because Python requires fixed-width lookbehind and the negator
+    can sit several words back ("is never actually sandboxed"). Stopping at the
+    sentence boundary keeps a disclaimer in one sentence from excusing a genuine
+    claim in the next.
+    """
+    found = []
+    for match in _CLAIM.finditer(text):
+        start = max(
+            text.rfind(".", 0, match.start()),
+            text.rfind("!", 0, match.start()),
+            text.rfind("?", 0, match.start()),
+            text.rfind("\n", 0, match.start()),
+        )
+        if _NEGATOR.search(text[start + 1 : match.start()]):
+            continue
+        found.append(match.group(0))
+    return found
+
+
+_DOC_FILES = ["README.md", "CLAUDE.md", "docs/threat-model.md"]
+
+
+def _catalog_texts() -> dict[str, str]:
+    return {" ".join(path) or "<root>": body for path, body in ENTRIES.items()}
+
+
+# --- 1. the disclaimer is present -----------------------------------------
+
+
+def test_explain_safety_entry_exists(capsys: pytest.CaptureFixture[str]) -> None:
+    rc = main(["explain", "safety"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "not a sandbox" in out.lower()
+    assert "does not protect against" in out.lower()
+
+
+def test_explain_root_carries_the_posture(capsys: pytest.CaptureFixture[str]) -> None:
+    rc = main(["explain"])
+    assert rc == 0
+    assert "not a sandbox" in capsys.readouterr().out.lower()
+
+
+def test_learn_carries_the_posture(capsys: pytest.CaptureFixture[str]) -> None:
+    rc = main(["learn"])
+    assert rc == 0
+    assert "not a sandbox" in capsys.readouterr().out.lower()
+
+
+def test_learn_json_exposes_safety_posture(capsys: pytest.CaptureFixture[str]) -> None:
+    """Machine consumers get the posture as a field, not buried in prose."""
+    rc = main(["learn", "--json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert "not a sandbox" in payload["safety_posture"].lower()
+
+
+@pytest.mark.parametrize("name", _DOC_FILES)
+def test_doc_carries_the_posture(name: str) -> None:
+    text = (_REPO_ROOT / name).read_text(encoding="utf-8").lower()
+    assert "not a sandbox" in text, f"{name} must state the guard-not-a-sandbox posture"
+
+
+# --- 2. nothing overclaims -------------------------------------------------
+
+
+@pytest.mark.parametrize("name", _DOC_FILES)
+def test_doc_makes_no_isolation_claim(name: str) -> None:
+    text = (_REPO_ROOT / name).read_text(encoding="utf-8")
+    hits = overclaims(text)
+    assert not hits, f"{name} appears to claim isolation shell-cli does not provide: {hits}"
+
+
+def test_catalog_makes_no_isolation_claim() -> None:
+    offenders = {name: overclaims(body) for name, body in _catalog_texts().items()}
+    offenders = {k: v for k, v in offenders.items() if v}
+    assert not offenders, f"explain catalog overclaims isolation: {offenders}"
+
+
+def test_cli_help_and_learn_make_no_isolation_claim(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    main(["learn"])
+    learn_text = capsys.readouterr().out
+    main([])
+    help_text = capsys.readouterr().out
+    for label, text in (("learn", learn_text), ("help", help_text)):
+        hits = overclaims(text)
+        assert not hits, f"{label} overclaims isolation: {hits}"
+
+
+# --- 3. the guard itself is trustworthy ------------------------------------
+#
+# A guard that cries wolf gets deleted, and one that never fires is decoration.
+# Both directions are pinned here so a future tweak to the pattern cannot
+# quietly break either.
+
+
+@pytest.mark.parametrize(
+    "honest",
+    [
+        "This is not fully isolated.",
+        "Do not treat this as a sandbox.",
+        "It is never sandboxed.",
+        "a guard, not a sandbox",
+        "It protects against careless behaviour, not an adversarial one.",
+        "There is no namespace, container, or seccomp isolation.",
+        "This is a guard rather than a sandbox.",
+        "The gate runs without a sandbox.",
+    ],
+)
+def test_honest_phrasing_does_not_trip_the_guard(honest: str) -> None:
+    assert overclaims(honest) == [], f"guard fired on honest text: {honest!r}"
+
+
+@pytest.mark.parametrize(
+    "claim",
+    [
+        "shell-cli provides a secure sandbox.",
+        "Every command is sandboxed.",
+        "The runner offers a sandbox for untrusted code.",
+        "Commands are fully isolated.",
+        "It guarantees a sandbox.",
+    ],
+)
+def test_affirmative_claim_trips_the_guard(claim: str) -> None:
+    assert overclaims(claim), f"guard missed an overclaim: {claim!r}"
+
+
+def test_disclaimer_does_not_excuse_a_later_claim() -> None:
+    """A negator must not leak across a sentence boundary."""
+    text = "This is not a sandbox. Every command is sandboxed anyway."
+    assert overclaims(text) == ["sandboxed"]
+
+
+def test_failure_message_reports_the_offending_text() -> None:
+    """Regression: capturing groups made findall report ``[('', '', '')]``."""
+    hits = overclaims("Commands are fully isolated.")
+    assert hits == ["fully isolated"]
