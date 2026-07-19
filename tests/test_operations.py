@@ -622,10 +622,28 @@ def test_evidence_records_that_the_host_enforces_no_network_policy(
 
 @pytest.mark.parametrize("module_name", ["shell.fs", "shell.process"])
 def test_handler_packages_predeclare_no_exports(module_name: str) -> None:
-    """r8: no fake or stub exports before the modules behind them exist."""
+    """r8: no fake or stub exports before the modules behind them exist.
+
+    Checked against ``__all__`` and against non-module attributes only. Once a
+    real handler module lands (``shell.fs.write``, for instance) and anything
+    in the process imports it — exactly what "imported by explicit module
+    path" requires — Python's own import machinery binds it onto the parent
+    package object (``shell.fs.write`` becomes ``vars(shell.fs)["write"]``).
+    That is ordinary, unavoidable import behaviour for a real submodule, not
+    the fake/stub export this test exists to catch, and it must not depend on
+    which other test modules happened to run first in this process. What r8
+    actually forbids is ``__init__.py`` itself declaring or curating a
+    re-export surface — so a *non-module* public attribute (a name r8 would
+    forbid, e.g. a stub function or curated re-export) still fails this test.
+    """
     import importlib
+    import types
 
     module = importlib.import_module(module_name)
     assert module.__all__ == ()
-    public = [name for name in vars(module) if not name.startswith("_")]
+    public = [
+        name
+        for name in vars(module)
+        if not name.startswith("_") and not isinstance(getattr(module, name), types.ModuleType)
+    ]
     assert public == [], f"{module_name} predeclares exports: {public}"
