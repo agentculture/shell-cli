@@ -109,7 +109,9 @@ def build_part(attachment: dict[str, str], *, file_bytes: bytes | None = None) -
 
 
 def _media_size_failure(operation: Operation, *, rel: str, size: int) -> OperationResult:
-    error = f"cannot view {rel}: {size} bytes exceeds the " f"{MAX_MEDIA_BYTES}-byte media size cap"
+    error = "cannot view {}: {} bytes exceeds the {}-byte media size cap".format(
+        rel, size, MAX_MEDIA_BYTES
+    )
     return OperationResult(
         operation_id=operation.id,
         status=OperationStatus.FAILED,
