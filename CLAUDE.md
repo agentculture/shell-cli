@@ -438,16 +438,31 @@ Three no-op invariants the colleague tests will not let you break:
 - an absent policy section is **ungated**, not empty-and-denying (presence, not
   emptiness, is the semantic);
 - a malformed policy file degrades to `{}` and **never raises**;
-- an empty policy is byte-identical to no policy — same `to_dict()` key set, same
-  step shape.
+- an empty policy is byte-identical to no policy — same step shape. Note the
+  invariant is pinned at the **loop** level, over `TaskResult.to_dict()`, by
+  `test_empty_policy_result_shape_is_byte_identical`. colleague's `Policy` has
+  **no `to_dict()` method** — an earlier draft of this file claimed "same
+  `to_dict()` key set" and was wrong about where the guarantee lives. shell-cli's
+  own `Policy` *does* implement `to_dict()` (evidence needs it), with a fixed key
+  set across empty/populated/degraded.
 
 Absent policy and *malformed configured* policy must remain distinct states.
 Native policy must never silently turn a malformed declared gate into allow-all.
 
-**Policy does not gate only `run_command`.** `check_file` has three live call
-sites: hooks (`hooks.py:311`, before every hook entry, every event), commands
-(`commands.py:291`), and an escalation gate (`escalation.py:176`). File *tool
-calls* are deliberately not gated — pinned by
+**Policy does not gate only `run_command`.** The split is `check_file` × 2 and
+`check_run_command` × 2:
+
+- `check_file` — hooks (`hooks.py:311`, before every hook entry, every event) and
+  commands (`commands.py:291`).
+- `check_run_command` — the tool gate (`loop.py:903`) and the escalation gate
+  (`escalation.py:176`, `check_run_command("agtag escalate")`).
+
+An earlier draft listed `escalation.py:176` as a third `check_file` site. It is
+not, and the difference is load-bearing for Milestone 3 scoping: the escalation
+gate is a **command** gate, so it inherits the shlex-token weakness rather than
+the checksum path.
+
+File *tool calls* are deliberately not gated — pinned by
 `tests/test_loop_run_command_policy.py:366-386`.
 
 The policy **file format** is `.colleague/approvals.json`: three recognized

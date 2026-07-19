@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-07-19
+
+### Added
+
+- `shell.evidence` — the evidence contract: per-operation records with redaction scope, retention, integrity digests, and an explicit degraded marker when a write fails (t77).
+- `docs/evidence-contract.md` — documents which secret classes are redacted and, explicitly, which are not: a declared secret is redacted, an undeclared secret echoed by a command is not (t77).
+- `shell.policy` — the policy evaluator ported from colleague with no config-dir coupling. Accepts pre-resolved candidate paths in increasing precedence order, or inline data; resolves no search order of its own (t78).
+- `shell.policy.snapshot` — snapshots policy from `source_root` and refuses candidates that are absolute, escape via `..`, or resolve inside `work_root`, so an operation cannot edit its own active authorization (t78).
+- `tests/characterization/` + `tests/fixtures/colleague/` — the six tool schemas pinned byte-for-byte and behavioural fixtures, generated from colleague at SHA 28fee29, driven through a provider-neutral `ToolProvider` protocol (t74a).
+
+### Changed
+
+- `Policy` distinguishes absent, malformed, unreadable, unresolved, and inline sources. All produce an empty policy and identical decisions, but a degraded gate appends a trust note to every verdict it issues, so it can never be mistaken for a repo that declared nothing (t78).
+- Evidence digests are taken AFTER redaction and truncation, labelled in-band as `sha256_scope: text-as-stored`. A digest of the unredacted stream would be an offline brute-force oracle for any short secret the record just removed (t77).
+
+### Fixed
+
+- CLAUDE.md claimed `check_file` has three live colleague call sites including `escalation.py:176`. It has two; `escalation.py:176` is `check_run_command("agtag escalate")`. The escalation gate is a command gate and inherits the shlex-token weakness, not the checksum path — which changes Milestone 3 scoping.
+- CLAUDE.md claimed an empty colleague policy is byte-identical to no policy via `to_dict()`. colleague's `Policy` has no `to_dict()`; the invariant is pinned at the loop level over `TaskResult.to_dict()`.
+
 ## [0.9.0] - 2026-07-19
 
 ### Added

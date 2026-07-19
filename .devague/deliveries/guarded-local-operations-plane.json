@@ -2,7 +2,7 @@
   "plan_slug": "guarded-local-operations-plane",
   "schema_version": 1,
   "created": "2026-07-19T01:13:43Z",
-  "updated": "2026-07-19T04:22:22Z",
+  "updated": "2026-07-19T04:36:19Z",
   "deviations": [
     {
       "id": "d1",
@@ -114,6 +114,16 @@
       "affects": [],
       "origin": "user",
       "status": "approved",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d10",
+      "what": "t78 (policy evaluator port) proceeds WITHOUT waiting for colleague's security fixes, excluding parent/child composition semantics",
+      "task_ref": "t78",
+      "reason": "SETTLED FROM THE SPEC, not assumed. c26 states policy.py:79-351 is ~270 lines of dependency-free stdlib 'requiring zero changes', and only load_policy:354-400 needs a seam. c11 states the evaluator and data structures move while location resolution does NOT. GHSA-6pfg-9vcp-hqw4 is a RESOLUTION fix (where approvals.json is read from); the evaluator being ported does not resolve. c12's source-root snapshot is shell-cli's own Environment design. EXCLUDED: parent/child policy composition, which GHSA-2m42-prxw-43w6 changes.",
+      "affects": [],
+      "origin": "llm",
+      "status": "proposed",
       "classification": "acceptable"
     }
   ]

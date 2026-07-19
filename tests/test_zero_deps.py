@@ -60,6 +60,7 @@ _CORE_MODULES = (
     "shell.explain.catalog",
     "shell.fs",
     "shell.operations",
+    "shell.policy",
     "shell.process",
     "shell.results",
     "shell.runners",
