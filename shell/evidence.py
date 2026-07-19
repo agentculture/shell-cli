@@ -356,7 +356,13 @@ def build_record(
             # Preview and applied are recorded as two independent facts. A
             # preview is not a flavour of success, and a reader must not have to
             # derive "did this happen?" from the status string alone.
-            "applied": bool(requested.apply) and not result.previewed,
+            #
+            # A DENIED operation is not applied, however emphatically the caller
+            # asked for it: the gate refuses before the handler is reached, so
+            # ``apply=True`` records an intention that was never carried out.
+            # Deriving this from ``requested.apply`` alone reported every denied
+            # mutation as an applied one, which is the opposite of what happened.
+            "applied": bool(requested.apply) and not (result.previewed or result.denied),
             "previewed": result.previewed,
             "requested_apply": bool(requested.apply),
             "exit_code": evidence.exit_code,
