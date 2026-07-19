@@ -29,10 +29,13 @@ The library has the operation core: `fs.read`, `fs.list`, `fs.write`, `fs.edit`
 and `fs.media`, path confinement, the policy evaluator, the evidence contract,
 and `HostRunner` execution are built and green.
 
-**The CLI has not caught up** — only the introspection verbs below are
-implemented here. Process execution and the `env` / `fs` / `process` / `git` /
-`policy` / `operation` verb groups are not exposed yet. See
-<https://github.com/agentculture/shell-cli/issues/1>.
+**The CLI is catching up.** `policy` and `operation` are now real CLI nouns —
+`policy check` / `policy explain` evaluate the same policy gate
+`shell.operations.execute()` uses, and `operation show` retrieves persisted
+evidence. The `env` / `fs` / `process` / `git` verb groups are still not
+exposed — there is no CLI verb yet that itself *executes* `fs.read` or a
+shell command, only ones that introspect the policy and evidence around that
+execution. See <https://github.com/agentculture/shell-cli/issues/1>.
 
 ## Safety posture
 
@@ -49,6 +52,13 @@ adversarial one. See `shell explain safety`.
 - `shell overview` — descriptive snapshot of the agent.
 - `shell doctor` — check the agent-identity invariants.
 - `shell cli overview` — describe the CLI surface.
+- `shell policy check <kind>` — evaluate the run_command policy gate for one
+  operation, through the same evaluator `execute()` uses.
+- `shell policy explain` — list gated kind prefixes and every known operation
+  kind's policy status, ungated kinds included explicitly.
+- `shell operation show <operation-id>` — retrieve a persisted evidence
+  record (requires an evidence store to have been configured; see
+  `docs/evidence-contract.md`).
 
 ## Exit-code policy
 
@@ -176,6 +186,80 @@ itself (distinct from the global `overview`, which describes the agent).
     shell cli overview --json
 """
 
+_POLICY = """\
+# shell policy
+
+Evaluate and explain the operation-policy gate. Both verbs call
+`shell.operations._policy_gate` directly — the exact function
+`shell.operations.execute()` gates through — so a verdict from this noun is
+never a re-derivation that could drift from what execution would actually do.
+
+## Verbs
+
+- `shell policy check <kind> [--command STR | --argv TOK ...] [--policy-file
+  PATH]... [--policy-json JSON]` — evaluate the run_command gate for one
+  `(kind, arguments)` pair. `<kind>` need not be a registered operation
+  handler; jurisdiction is decided by the kind string
+  (`GATED_KIND_PREFIXES = ("process.",)`), not by handler registration. A
+  denied verdict is reported information, not a CLI failure — exit 0
+  regardless of the decision; parse the `decision` field.
+- `shell policy explain [--policy-file PATH]... [--policy-json JSON]` — lists
+  the gated kind prefixes and, for every operation kind currently registered
+  in this process, its explicit status. `fs.*` kinds are deliberately **not**
+  policy-gated (confining file operations is the filesystem layer's job, not
+  the run_command allow-list's) and are reported `ungated` explicitly rather
+  than omitted — `ungated` and `allowed` are distinct
+  `PolicyDecision` values, never conflated.
+- `shell policy overview` — describe this noun.
+
+## Usage
+
+    shell policy check fs.read --json
+    shell policy check process.shell --command "rm -rf /" --policy-file approvals.json
+    shell policy explain --json
+
+## See also
+
+- `shell explain safety`
+- `docs/evidence-contract.md`
+"""
+
+_OPERATION = """\
+# shell operation
+
+Retrieve persisted evidence for a previously executed operation. Reads only —
+this noun never executes an operation itself.
+
+## Verbs
+
+- `shell operation show <operation-id> [--evidence-dir DIR]` — retrieve the
+  persisted evidence record for `<operation-id>` from an
+  `EvidenceStore` directory (default `./.shell/evidence`).
+- `shell operation overview` — describe this noun.
+
+## Persistence is opt-in
+
+`shell.operations.execute()` only writes an evidence record when its caller
+passes `evidence_store=...`; most invocations configure none. "No record
+found" is therefore the ordinary case, not a bug — and this command reports
+that honestly rather than implying an empty trail is the same thing as no
+trail at all. Three cases are kept distinct: no evidence directory at the
+given location (exit 1), a directory with records but none matching the
+given id (exit 1, with the count of records actually present), and a
+location that exists but cannot be read at all — not a directory, or a
+permission/IO failure (exit 2, the one genuine environment-error path in this
+verb surface).
+
+## Usage
+
+    shell operation show <operation-id>
+    shell operation show <operation-id> --evidence-dir .shell/evidence --json
+
+## See also
+
+- `docs/evidence-contract.md`
+"""
+
 
 ENTRIES: dict[tuple[str, ...], str] = {
     (): _ROOT,
@@ -189,4 +273,11 @@ ENTRIES: dict[tuple[str, ...], str] = {
     ("doctor",): _DOCTOR,
     ("cli",): _CLI,
     ("cli", "overview"): _CLI,
+    ("policy",): _POLICY,
+    ("policy", "overview"): _POLICY,
+    ("policy", "check"): _POLICY,
+    ("policy", "explain"): _POLICY,
+    ("operation",): _OPERATION,
+    ("operation", "overview"): _OPERATION,
+    ("operation", "show"): _OPERATION,
 }
