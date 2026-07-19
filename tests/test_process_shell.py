@@ -33,7 +33,7 @@ from shell.operations import ExecutionProfile, Operation, OperationIntent
 from shell.policy import load_policy
 from shell.process import exec as process_exec
 from shell.process import shell as process_shell
-from shell.results import OperationResult, OperationStatus, PolicyDecision
+from shell.results import OperationResult, OperationStatus, PolicyDecision, SecretHandling
 from shell.runners.host import HostRunner
 from tests.test_honesty import overclaims
 
@@ -177,15 +177,19 @@ def test_a_real_command_leaves_the_work_root(env: Environment) -> None:
 def test_a_real_command_echoing_a_declared_secret_is_redacted_in_the_record(
     env: Environment,
 ) -> None:
-    """Acceptance 4: a live process prints a declared secret; the record has none.
+    """Acceptance 4: a live process prints a declared secret; nothing keeps it.
 
-    Also pins the exact SCOPE of that guarantee, because the scope is easy to
-    overread. Redaction is applied by ``evidence.capture`` when the record is
-    built. The live ``OperationResult`` handed straight back to the caller is
-    NOT scrubbed — ``execute`` passes ``secrets`` to the capture step only, and
-    no handler ever sees them. A consumer that forwards a raw result to a model
-    is outside the redaction boundary, and that gap is asserted here so it is a
-    known, findable limit rather than an assumption.
+    Redaction covers BOTH representations. The record is scrubbed when it is
+    built, and the live ``OperationResult`` is scrubbed before it is returned.
+    An earlier version of this test pinned the opposite for the result — it
+    asserted ``result.evidence.stdout == secret`` and described that as a known
+    limit. It was a real leak rather than a limit: the first consumer renders
+    result output back to the model, so the unscrubbed result was the exact path
+    a declared secret would have travelled. Scrubbing only the record protected
+    the audit trail and not the reader.
+
+    What stays true is the *undeclared* gap, pinned by
+    ``test_an_undeclared_secret_is_not_detected`` below.
     """
     secret = "s3cr3t-token-value-do-not-record"  # nosec B105 - test fixture, not a credential
     records: list[EvidenceRecord] = []
@@ -202,9 +206,16 @@ def test_a_real_command_echoing_a_declared_secret_is_redacted_in_the_record(
     )
 
     # The process really did emit it — otherwise the redaction below is vacuous.
+    # The record's replacement count proves that: it counts what was actually
+    # found and removed, so a command that emitted nothing could not reach 3.
     assert result.status is OperationStatus.SUCCEEDED
-    assert result.evidence.stdout == secret
-    assert secret in result.evidence.stderr
+
+    # The live result the caller holds is scrubbed too, not only the record.
+    assert result.evidence.stdout == REDACTED
+    assert result.evidence.stderr == f"x{REDACTED}x"
+    assert secret not in json.dumps(result.to_dict(), default=str)
+    assert result.evidence.secret_handling is SecretHandling.REDACTED
+    assert result.evidence.redaction_complete is False
 
     body = records[0].body
     serialized = json.dumps(body, default=str)

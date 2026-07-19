@@ -16,6 +16,7 @@ writing, what the gap is.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -26,6 +27,7 @@ import pytest
 from shell.environment import Environment, NetworkPolicy, WorkspaceKind
 from shell.evidence import (
     DEFAULT_STORE_SUBDIR,
+    PERSISTENCE_UNKNOWN_NOTE,
     REDACTED,
     REDACTION_IS_COMPLETE,
     EvidenceRecord,
@@ -357,6 +359,117 @@ def test_a_successful_write_leaves_the_result_untouched(tmp_path: Path) -> None:
     assert returned is result, "a clean capture must not rebuild the result"
     assert returned.evidence.degraded is False
     assert record.to_dict()["persistence"]["persisted"] is True
+
+
+#: Every block ``docs/evidence-contract.md`` documents as part of "the record".
+#: The round-trip test below compares the bytes on disk against this set, which is
+#: the assertion whose absence let the persisted body silently lose a section.
+DOCUMENTED_BLOCKS = frozenset(
+    {
+        "schema_version",
+        "record_id",
+        "recorded_at",
+        "operation_id",
+        "status",
+        "caller",
+        "operation",
+        "execution",
+        "policy",
+        "environment",
+        "output",
+        "effects",
+        "redaction",
+        "evidence_quality",
+        "persistence",
+        "integrity",
+    }
+)
+
+
+def test_a_record_read_back_off_disk_has_every_documented_block(tmp_path: Path) -> None:
+    """Round-trip: write a record, read the bytes back, compare to the contract.
+
+    This is the test whose absence hid a real divergence. Every other assertion in
+    this file inspects the **in-memory** record ``capture`` returns, and the
+    in-memory record was complete — so a persisted body missing an entire
+    documented section went unnoticed until a CLI verb tried to read one.
+
+    ``EvidenceStore.write`` serialises the record it is handed, so any block added
+    to the returned record *after* the write is absent from the artifact. Asserting
+    against the documented key set, from disk, is what makes that class of drift
+    impossible to reintroduce quietly.
+    """
+    operation = make_operation()
+    store = EvidenceStore(directory=tmp_path / "evidence")
+
+    _, record = capture(make_result(operation), requested=operation, store=store)
+
+    stored = store.records()
+    assert len(stored) == 1
+    on_disk = stored[0]
+
+    assert set(on_disk) == DOCUMENTED_BLOCKS, "the stored body must match the documented contract"
+    # The in-memory record and the artifact agree on which blocks exist. They are
+    # allowed to differ on one field's *value* — see the test below — never on
+    # whether a reader finds the block at all.
+    assert set(record.to_dict()) == set(on_disk)
+
+
+def test_the_stored_body_reports_its_own_write_as_unknown_rather_than_omitting_it(
+    tmp_path: Path,
+) -> None:
+    """The one field an artifact genuinely cannot fill, and how it says so.
+
+    A record is the thing being written, so the outcome of that write does not
+    exist when the bytes are serialised. Two dishonest options were available:
+    omit the block (a reader silently misses a documented section) or assert
+    ``persisted: true`` before knowing it (a claim about the future). It reports
+    ``null`` with a note instead, which is the same posture ``execution.applied``
+    and ``effects.complete`` take elsewhere.
+
+    Everything knowable *before* the write — the destination path, whether the
+    store sits outside the work root — is filled in, so the null is narrow.
+    """
+    operation = make_operation()
+    store = EvidenceStore(directory=tmp_path / "evidence")
+
+    _, record = capture(make_result(operation), requested=operation, store=store)
+
+    on_disk = store.records()[0]["persistence"]
+    assert on_disk["persisted"] is None
+    assert on_disk["write_attempted"] is True
+    assert on_disk["path"].endswith(".json")
+    assert PERSISTENCE_UNKNOWN_NOTE in on_disk["note"]
+
+    # The returned record resolves it; the two disagree only here, and only in
+    # the direction of the artifact knowing less.
+    returned = record.to_dict()["persistence"]
+    assert returned["persisted"] is True
+    assert returned["path"] == on_disk["path"]
+    assert returned["note"] == ""
+
+
+def test_the_stored_bodys_digest_validates_against_its_own_bytes(tmp_path: Path) -> None:
+    """Adding the persistence block before the write must not break integrity.
+
+    ``integrity.content_sha256`` covers the canonical serialization of the rest of
+    the body. The on-disk body and the returned record now have *different*
+    persistence blocks and therefore different digests — which is correct, they
+    are different bodies. What must hold is that each digest validates against the
+    bytes it accompanies, so an external validator reading the file recomputes a
+    match.
+    """
+    operation = make_operation()
+    store = EvidenceStore(directory=tmp_path / "evidence")
+    capture(make_result(operation), requested=operation, store=store)
+
+    on_disk = store.records()[0]
+    claimed = on_disk.pop("integrity")["content_sha256"]
+
+    recomputed = hashlib.sha256(
+        json.dumps(on_disk, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    ).hexdigest()
+    assert recomputed == claimed
 
 
 def test_no_store_is_not_degraded() -> None:

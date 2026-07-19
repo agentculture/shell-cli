@@ -104,6 +104,7 @@ def test_execute_needs_no_spawn_batch_spawn_deepthink_or_allowlist() -> None:
         "evidence_store",
         "evidence_sink",
         "secrets",
+        "reveal_secrets_in_result",
     }
     for forbidden in ("spawn", "batch_spawn", "deepthink", "allowlist"):
         assert forbidden not in names

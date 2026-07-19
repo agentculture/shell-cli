@@ -18,6 +18,10 @@ Three commitments shape this module:
 * **Evidence records isolation honestly.** :attr:`Evidence.isolation` is the
   runner's own self-description. For host execution it is ``"none"`` — the guard
   is best-effort and a process it starts can reach the whole machine.
+* **A declared secret is removed from the live result, not only the record.**
+  :attr:`Evidence.secret_handling` says which of the three things happened, and
+  :attr:`Evidence.redaction_complete` is permanently ``False`` — see
+  :data:`REDACTION_IS_COMPLETE`.
 """
 
 from __future__ import annotations
@@ -27,6 +31,7 @@ from enum import Enum
 from typing import Any, Mapping
 
 __all__ = [
+    "REDACTION_IS_COMPLETE",
     "SCHEMA_VERSION",
     "Effects",
     "Evidence",
@@ -34,7 +39,18 @@ __all__ = [
     "OperationStatus",
     "PolicyDecision",
     "PolicyVerdict",
+    "SecretHandling",
 ]
+
+#: Whether redaction can ever be claimed complete. It cannot.
+#:
+#: Declared secrets are removed wherever they appear; a secret nobody declared is
+#: not detected, because detecting it would mean guessing which strings are
+#: sensitive. So no surface in this package — record or live result — ever claims
+#: to be clean. This constant is the single source of that answer;
+#: :mod:`shell.evidence` re-exports it rather than keeping a second copy that
+#: could drift.
+REDACTION_IS_COMPLETE = False
 
 # Version of the whole neutral cross-repo contract — ``Operation``,
 # ``OperationResult`` and ``Environment`` version together, because a consumer
@@ -96,6 +112,33 @@ class PolicyVerdict:
         }
 
 
+class SecretHandling(str, Enum):
+    """What happened to declared secret values in *this* result.
+
+    Three states rather than a boolean, because "not redacted" has two entirely
+    different causes and an auditor must not have to guess which one applied.
+    ``NONE_DECLARED`` means the caller handed over no secrets and there was
+    nothing to remove; ``REVEALED`` means secrets *were* declared and the caller
+    explicitly asked to see them anyway. Collapsing those two would make a
+    deliberate opt-in indistinguishable from an ordinary run.
+
+    None of the three is a claim of cleanliness. Even ``REDACTED`` leaves
+    :attr:`Evidence.redaction_complete` ``False``: a command that printed a
+    credential nobody declared put it in this result verbatim.
+    """
+
+    #: No secrets were passed to :func:`shell.operations.execute`.
+    NONE_DECLARED = "none_declared"
+
+    #: Declared secret values were removed from every string in this result.
+    REDACTED = "redacted"
+
+    #: Declared secrets were left in place because the caller opted in. The
+    #: persisted evidence record is redacted regardless — this state describes
+    #: the live result only.
+    REVEALED = "revealed"
+
+
 @dataclass(frozen=True)
 class Effects:
     """What an operation is known to have changed.
@@ -140,6 +183,12 @@ class Evidence:
     ``stdout`` and ``stderr`` are captured **separately**. A consumer that needs
     them interleaved concatenates them itself; the neutral record does not throw
     away the distinction to save the consumer a line.
+
+    :attr:`secret_handling` and :attr:`secret_replacements` describe what was
+    removed from *this result*, which is a different question from what was
+    removed from the persisted record. The two can differ in exactly one
+    direction: a caller may opt into seeing declared secrets live, and the record
+    is redacted anyway. The reverse is not offered.
     """
 
     backend: str = "unknown"
@@ -167,6 +216,18 @@ class Evidence:
     stderr_bytes: int | None = None
     degraded: bool = False
     degraded_reason: str = ""
+    #: What happened to declared secrets in this result. Stamped by
+    #: :func:`shell.operations.execute`; a handler never sets it, because a
+    #: handler is never given the secret values in the first place.
+    secret_handling: SecretHandling = SecretHandling.NONE_DECLARED
+    #: How many declared secret occurrences were replaced in this result. Zero
+    #: under :attr:`SecretHandling.REVEALED` because nothing was replaced, and
+    #: zero under ``REDACTED`` when no declared secret happened to appear.
+    secret_replacements: int = 0
+    #: Permanently ``False`` — mirrors :data:`REDACTION_IS_COMPLETE`. Redacting
+    #: every declared secret still leaves undeclared ones untouched, so this
+    #: field never becomes a clean bill of health.
+    redaction_complete: bool = REDACTION_IS_COMPLETE
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -192,6 +253,9 @@ class Evidence:
             "stderr_bytes": self.stderr_bytes,
             "degraded": self.degraded,
             "degraded_reason": self.degraded_reason,
+            "secret_handling": self.secret_handling.value,
+            "secret_replacements": self.secret_replacements,
+            "redaction_complete": self.redaction_complete,
         }
 
 
