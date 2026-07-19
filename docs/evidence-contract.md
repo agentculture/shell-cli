@@ -38,7 +38,7 @@ One JSON object per operation. Top-level blocks:
 | *(root)* | `schema_version`, `record_id`, `recorded_at`, `operation_id`, `status` |
 | `caller` | `agent`, `task_id`, `tool`, plus `all` — the caller's full provenance map, unmodified |
 | `operation` | `kind`, `requested`, `normalized`, `normalized_available` |
-| `execution` | `applied`, `previewed`, `requested_apply`, `exit_code`, `error`, `started_at`, `ended_at`, `duration_ms`, `resources` |
+| `execution` | `applied`, `handler_entered`, `handler_disposition`, `previewed`, `requested_apply`, `exit_code`, `error`, `started_at`, `ended_at`, `duration_ms`, `resources` |
 | `policy` | `decision`, `reason`, `matched_rule` |
 | `environment` | `id`, `workspace_kind`, `runner`, `isolation`, `isolation_note`, `root`, `cwd`, `mounts`, `network`, `network_enforced` |
 | `output` | `stdout`, `stderr` (each a capture block), `rendering`, `structured` |
@@ -61,10 +61,52 @@ is never copied into both slots to make the record look complete.
 
 ### Preview and applied are separate facts
 
-`execution.applied` is true only when the caller requested apply *and* the
-operation was not previewed. A preview is not a flavour of success anywhere in
-this package, and a reader must never have to infer "did this happen?" from
-parsing a status string.
+A preview is not a flavour of success anywhere in this package, and a reader must
+never have to infer "did this happen?" from parsing a status string.
+
+### `applied` is three-valued, and that is deliberate
+
+`execution.applied` is the field an auditor leans on hardest, so it is the field
+most worth stating precisely.
+
+| Value | Meaning |
+|---|---|
+| `true` | The handler ran to completion and the caller had requested apply. |
+| `false` | Nothing was applied, definitively. The handler was never entered. |
+| `null` | The handler **was** entered and then crashed. Nobody can say. |
+
+The `null` case is the whole reason this is not a boolean. A status of `failed`
+covers two situations with opposite answers:
+
+- **Rejected before the handler was entered** — an unknown kind, a rewrite the
+  dispatcher refused, a rewrite that raised, a policy denial, a preview. Dispatch
+  returned above the handler call. `applied` is `false`.
+- **The handler was entered and raised** — it may have written half a file,
+  started a process, or done nothing at all. `applied` is `null`.
+
+Reporting `false` for the second case would be a fabricated all-clear, and
+reporting `true` would be a fabricated change. Neither is available, so the
+record declines to answer. This is the same posture as `effects.complete` and
+`environment.network_enforced`: a thing the code cannot know is reported as
+unknown rather than filled in with the convenient value.
+
+Two companion fields make the derivation auditable rather than something to
+reverse-engineer from `applied`:
+
+- **`handler_entered`** — `true`, `false`, or `null`. The underlying fact.
+- **`handler_disposition`** — `not_reached`, `completed`, `crashed`, or
+  `unstated`.
+
+`unstated` appears only on records built outside the dispatch pipeline, by
+calling `build_record` directly. Such a caller cannot know how far a pipeline
+got, so `applied` degrades to `null` for any non-success status rather than
+guessing in the dangerous direction. Records produced by `shell.operations.execute`
+never carry `unstated` — dispatch always knows, and always says.
+
+`requested_apply` records what the caller *asked for* and is never conflated with
+what happened. An operation denied with `apply=true` reports
+`requested_apply: true` alongside `applied: false`; the intention and the event
+are separate facts and are stored separately.
 
 ### stdout and stderr stay separate
 

@@ -708,6 +708,196 @@ def test_a_denied_operation_is_never_recorded_as_applied(registry, env: Environm
     assert handler.seen == []
 
 
+# --- applied: the pre-handler / in-handler distinction ----------------------
+#
+# ``failed`` covers two situations with opposite answers to "did anything
+# happen?". The tests below are named for that split on purpose: a future editor
+# cannot collapse them back into one boolean without the diff saying so.
+
+
+def _rewrite_to_other_kind(op: Operation) -> Operation:
+    from dataclasses import replace
+
+    return replace(op, kind="fs.read")
+
+
+def _rewrite_that_raises(op: Operation) -> dict:
+    raise RuntimeError("hook exploded")
+
+
+@pytest.mark.parametrize(
+    "label, kind, kwargs",
+    [
+        ("unknown kind, normalize refused", "nobody.registered.this", {}),
+        ("rewrite rejected", "process.shell", {"rewrite": _rewrite_to_other_kind}),
+        ("rewrite raised", "process.shell", {"rewrite": _rewrite_that_raises}),
+    ],
+)
+def test_a_failure_before_the_handler_was_entered_is_never_applied(
+    registry, env: Environment, label: str, kind: str, kwargs: dict
+) -> None:
+    """Nothing ran, so ``applied`` is definitively false — not merely unknown.
+
+    Every one of these returns from ``execute`` *above* ``spec.run``. The first
+    fix caught the denial path and left these three reporting ``applied=True``:
+    a rewrite rejected for trying to turn ``process.shell`` into ``fs.read``
+    would have been filed as an operation that was carried out.
+    """
+    handler = _Recorder()
+    registry("process.shell", run=handler)
+    registry("fs.read", intent=OperationIntent.OBSERVE, run=_Recorder())
+    records, sink = _sink()
+
+    result = operations.execute(
+        Operation(kind=kind, arguments={"command": "git status"}, apply=True),
+        env,
+        policy=_allow_only_git(),
+        evidence_sink=sink,
+        **kwargs,
+    )
+
+    assert result.status is OperationStatus.FAILED, label
+    execution = records[0].to_dict()["execution"]
+    assert execution["applied"] is False, label
+    assert execution["handler_entered"] is False, label
+    assert execution["handler_disposition"] == "not_reached", label
+    assert execution["requested_apply"] is True, label
+    assert handler.seen == [], label
+
+
+def test_a_crash_inside_the_handler_records_applied_as_unknown(registry, env: Environment) -> None:
+    """``applied`` is null here, and null is the only honest value.
+
+    The handler was entered and died partway. It may have written half a file,
+    started a process, or done nothing at all — and nothing at this layer can
+    tell which. ``false`` would be a fabricated all-clear; ``true`` would be a
+    fabricated change. The record declines to guess, in a field an auditor can
+    filter on rather than in prose.
+    """
+    entered: list[Operation] = []
+
+    def _crash(operation: Operation, environment: Environment) -> OperationResult:
+        entered.append(operation)
+        raise RuntimeError("died mid-write")
+
+    registry("process.shell", run=_crash)
+    records, sink = _sink()
+
+    result = operations.execute(
+        Operation(kind="process.shell", arguments={"command": "git status"}, apply=True),
+        env,
+        policy=_allow_only_git(),
+        evidence_sink=sink,
+    )
+
+    assert result.status is OperationStatus.FAILED
+    assert len(entered) == 1, "the handler really was entered"
+
+    execution = records[0].to_dict()["execution"]
+    assert execution["applied"] is None
+    assert execution["applied"] is not False, "false here would be a fabricated all-clear"
+    assert execution["handler_entered"] is True
+    assert execution["handler_disposition"] == "crashed"
+
+
+def test_the_two_kinds_of_failure_stay_distinguishable(registry, env: Environment) -> None:
+    """Both are ``failed``; the record must not let that be the whole story.
+
+    This is the assertion that stops the distinction being quietly collapsed:
+    two operations with identical status carry different answers to "was
+    anything applied?", and neither answer is invented.
+    """
+
+    def _crash(operation: Operation, environment: Environment) -> OperationResult:
+        raise RuntimeError("died mid-write")
+
+    registry("process.shell", run=_crash)
+    records, sink = _sink()
+
+    before = operations.execute(Operation(kind="gone.missing", apply=True), env, evidence_sink=sink)
+    inside = operations.execute(
+        Operation(kind="process.shell", arguments={"command": "git status"}, apply=True),
+        env,
+        policy=_allow_only_git(),
+        evidence_sink=sink,
+    )
+
+    assert before.status is inside.status is OperationStatus.FAILED
+    before_exec = records[0].to_dict()["execution"]
+    inside_exec = records[1].to_dict()["execution"]
+
+    assert before_exec["applied"] is False
+    assert inside_exec["applied"] is None
+    assert before_exec["handler_entered"] != inside_exec["handler_entered"]
+    assert before_exec["handler_disposition"] != inside_exec["handler_disposition"]
+
+
+@pytest.mark.parametrize(
+    "label, kind, apply_it, gate, status, applied, entered",
+    [
+        ("succeeded", "process.shell", True, "allow", "succeeded", True, True),
+        ("previewed", "process.shell", False, "allow", "previewed", False, False),
+        ("denied", "process.shell", True, "deny", "denied", False, False),
+        ("failed", "gone.missing", True, "allow", "failed", False, False),
+    ],
+)
+def test_every_terminal_state_reports_applied_honestly(
+    registry,
+    env: Environment,
+    label: str,
+    kind: str,
+    apply_it: bool,
+    gate: str,
+    status: str,
+    applied: bool,
+    entered: bool,
+) -> None:
+    """All four terminal states in one table, so none of them drifts alone."""
+    registry("process.shell", run=_Recorder())
+    records, sink = _sink()
+
+    command = "rm -rf /" if gate == "deny" else "git status"
+    result = operations.execute(
+        Operation(kind=kind, arguments={"command": command}, apply=apply_it),
+        env,
+        policy=_deny_rm() if gate == "deny" else _allow_only_git(),
+        evidence_sink=sink,
+    )
+
+    assert result.status.value == status, label
+    execution = records[0].to_dict()["execution"]
+    assert execution["applied"] is applied, label
+    assert execution["handler_entered"] is entered, label
+    # The caller's request survives regardless — it is a separate fact.
+    assert execution["requested_apply"] is apply_it, label
+
+
+def test_a_record_built_outside_dispatch_declines_to_guess() -> None:
+    """The out-of-pipeline default degrades safely rather than asserting.
+
+    ``build_record`` called directly cannot know how far a pipeline got, so a
+    non-success status yields ``applied=None``. Assuming it ran is the dangerous
+    direction; the default picks "unknown" instead.
+    """
+    from shell.evidence import build_record
+
+    operation = Operation(kind="process.shell", arguments={"command": "x"}, apply=True)
+    failed = build_record(
+        OperationResult(operation_id=operation.id, status=OperationStatus.FAILED),
+        requested=operation,
+    ).to_dict()["execution"]
+    succeeded = build_record(
+        OperationResult(operation_id=operation.id, status=OperationStatus.SUCCEEDED),
+        requested=operation,
+    ).to_dict()["execution"]
+
+    assert failed["applied"] is None
+    assert failed["handler_entered"] is None
+    assert failed["handler_disposition"] == "unstated"
+    # A success can only have come from a handler that ran, so that much is safe.
+    assert succeeded["applied"] is True
+
+
 @pytest.mark.parametrize(
     "kind, arguments, apply_it, expected",
     [

@@ -67,7 +67,7 @@ from enum import Enum
 from typing import Any, Callable, Mapping
 
 from shell.environment import Environment
-from shell.evidence import EvidenceRecord, EvidenceStore, capture
+from shell.evidence import EvidenceRecord, EvidenceStore, HandlerDisposition, capture
 from shell.policy import Policy
 from shell.results import (
     SCHEMA_VERSION,
@@ -501,6 +501,7 @@ def _record_evidence(
     store: EvidenceStore | None,
     secrets: Mapping[str, str] | None,
     sink: Callable[[EvidenceRecord], None] | None,
+    disposition: HandlerDisposition,
 ) -> OperationResult:
     """Build, optionally persist and optionally deliver the record for *result*.
 
@@ -522,6 +523,7 @@ def _record_evidence(
             environment=environment,
             store=store,
             secrets=secrets,
+            disposition=disposition,
         )
     except Exception as exc:  # noqa: BLE001 - evidence failure must not eat a result
         reason = f"evidence record could not be built: {type(exc).__name__}: {exc}"
@@ -589,7 +591,15 @@ def execute(
     started_at = time.time()
     policy = policy if policy is not None else Policy()
 
-    def _finish(result: OperationResult, effective: Operation | None) -> OperationResult:
+    # Every exit from this function states how far it got. The parameter is
+    # required rather than defaulted: a defaulted disposition is a value someone
+    # forgets to pass, and the forgotten case would be recorded as a claim about
+    # the world instead of an omission.
+    def _finish(
+        result: OperationResult,
+        effective: Operation | None,
+        disposition: HandlerDisposition,
+    ) -> OperationResult:
         stamped = _stamp(result, environment, started_at, time.time())
         return _record_evidence(
             stamped,
@@ -599,9 +609,16 @@ def execute(
             store=evidence_store,
             secrets=secrets,
             sink=evidence_sink,
+            disposition=disposition,
         )
 
     def _failed(message: str, effective: Operation | None) -> OperationResult:
+        """A failure raised by the pipeline itself, before the handler was entered.
+
+        Every caller of this helper sits above ``spec.run``. A handler that
+        crashed is a different terminal state and builds its result inline, so
+        the two can never share a disposition by accident.
+        """
         return _finish(
             OperationResult(
                 operation_id=operation.id,
@@ -610,6 +627,7 @@ def execute(
                 rendering=message,
             ),
             effective,
+            HandlerDisposition.NOT_REACHED,
         )
 
     try:
@@ -645,6 +663,7 @@ def execute(
                 rendering=verdict.reason,
             ),
             effective,
+            HandlerDisposition.NOT_REACHED,
         )
 
     if effective.requires_apply and not effective.apply:
@@ -664,12 +683,20 @@ def execute(
                 effects=Effects(complete=False),
             ),
             effective,
+            HandlerDisposition.NOT_REACHED,
         )
 
+    # ``handler_for`` sits outside the try deliberately, so the CRASHED window
+    # covers the handler's own body and nothing else. A lookup failure here is a
+    # pipeline error, not evidence that project code ran.
     spec = handler_for(effective.kind)
     try:
         result = spec.run(effective, environment)
     except Exception as exc:  # noqa: BLE001 - a handler crash must stay recoverable
+        # The handler was entered and died. It may have completed part of its
+        # work — a half-written file, a process that started — and nothing at
+        # this layer can distinguish that from having done nothing at all. The
+        # record says "unknown" rather than picking the convenient answer.
         message = f"{effective.kind} failed: {type(exc).__name__}: {exc}"
         return _finish(
             OperationResult(
@@ -680,6 +707,7 @@ def execute(
                 rendering=message,
             ),
             effective,
+            HandlerDisposition.CRASHED,
         )
 
-    return _finish(replace(result, verdict=verdict), effective)
+    return _finish(replace(result, verdict=verdict), effective, HandlerDisposition.COMPLETED)
