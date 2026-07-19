@@ -62,6 +62,8 @@ _CORE_MODULES = (
     "shell.operations",
     "shell.policy",
     "shell.process",
+    "shell.process.exec",
+    "shell.process.shell",
     "shell.results",
     "shell.runners",
     "shell.runners.host",
@@ -152,6 +154,8 @@ def test_no_third_party_imports() -> None:
         import shell.fs  # noqa: F401
         import shell.operations  # noqa: F401
         import shell.process  # noqa: F401
+        import shell.process.exec  # noqa: F401
+        import shell.process.shell  # noqa: F401
         import shell.results  # noqa: F401
         import shell.runners  # noqa: F401
         import shell.runners.host  # noqa: F401
