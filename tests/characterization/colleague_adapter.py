@@ -25,6 +25,7 @@ package).
 
 from __future__ import annotations
 
+import functools
 import importlib.util
 import json
 import os
@@ -37,13 +38,67 @@ from typing import Any
 from tests.characterization.harness import ToolCall, ToolCallResult
 
 _GENERATOR_PATH = Path(__file__).resolve().parents[2] / "scripts" / "capture_colleague_baseline.py"
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 
-#: Overridable so a different checkout location doesn't require editing code.
-DEFAULT_COLLEAGUE_ROOT = Path(
-    os.environ.get("SHELL_CLI_COLLEAGUE_ROOT", "/home/spark/git/colleague")
-)
+
+def _true_checkout_root() -> Path:
+    """The directory a SIBLING checkout of colleague would actually live in.
+
+    For an ordinary clone this is just ``_REPO_ROOT`` itself. This task
+    frequently runs inside a LINKED git worktree (e.g.
+    ``<repo>/.claude/worktrees/<id>/``), whose own toplevel is a nested
+    sandbox path, not the original checkout -- sibling discovery below would
+    otherwise look for colleague next to ``.claude/worktrees/`` instead of
+    next to the real repo. ``git rev-parse --git-common-dir`` always resolves
+    to the ORIGINAL repository's ``.git``, regardless of which linked
+    worktree asks, so its parent is the right anchor either way. Falls back
+    to ``_REPO_ROOT`` on any failure (no git on PATH, not a repo, ...) --
+    discovery failing just means the guess below resolves to a path that
+    does not exist, which :func:`colleague_available` already turns into a
+    clean skip, never a failure.
+    """
+    try:
+        proc = subprocess.run(  # nosec B603,B607 - fixed argv, no shell, git from PATH
+            ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            cwd=_REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        if proc.returncode == 0 and proc.stdout.strip():
+            return Path(proc.stdout.strip()).resolve().parent
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return _REPO_ROOT
+
+
+def _discover_colleague_root() -> Path:
+    """Best-effort default -- never a hardcoded personal path.
+
+    Priority: ``$SHELL_CLI_COLLEAGUE_ROOT``, then a ``colleague/`` checkout
+    cloned as a SIBLING of this repo's real checkout (``<workspace>/shell-cli``
+    next to ``<workspace>/colleague`` -- the layout the wider multi-project
+    workspace this repo lives in already uses). Neither branch is assumed to
+    exist: :func:`colleague_available` verifies actual drivability below, so
+    a wrong guess here only ever produces a skip, never a failure, on
+    someone else's machine.
+    """
+    env_value = os.environ.get("SHELL_CLI_COLLEAGUE_ROOT")
+    if env_value:
+        return Path(env_value)
+    return _true_checkout_root().parent / "colleague"
+
+
+#: Overridable via $SHELL_CLI_COLLEAGUE_ROOT; otherwise a sibling-checkout
+#: guess (see _discover_colleague_root). Never load-bearing for a pass/fail
+#: outcome -- colleague_available() verifies real drivability, so a wrong
+#: guess here only ever changes a skip REASON, never turns a skip into a
+#: failure.
+DEFAULT_COLLEAGUE_ROOT = _discover_colleague_root()
 
 _CALL_TIMEOUT_SECONDS = 60
+_AVAILABILITY_PROBE_TIMEOUT_SECONDS = 30
 
 # The program that runs INSIDE colleague's own interpreter for exactly ONE
 # tool call. Deliberately re-creates a fresh ToolExecutor per call (never
@@ -90,9 +145,91 @@ def _load_generator():
 _generator = _load_generator()
 
 
+def _import_probe_argv(root: Path) -> list[str]:
+    """The argv that checks whether ``colleague.tools`` actually imports.
+
+    Reuses :func:`colleague_interpreter`'s own choice (the checkout's
+    ``.venv`` when materialized, else the ``uv run --project`` fallback) --
+    but when that fallback is what gets picked, inserts ``--no-sync`` so a
+    bare, un-synced checkout (a plain ``git clone``, no ``.venv``) fails
+    FAST and reports "not drivable" instead of silently installing
+    colleague's whole dependency tree (``agentfront`` and friends) as a side
+    effect of merely checking availability. That install-on-check behaviour
+    is exactly the cost CI's KNOWN GAP note (.github/workflows/tests.yml)
+    declined to pay on every push.
+    """
+    interpreter = _generator.colleague_interpreter(root)
+    if interpreter[:2] == ["uv", "run"]:
+        interpreter = interpreter[:2] + ["--no-sync"] + interpreter[2:]
+    return interpreter + ["-c", "import colleague.tools"]
+
+
+@functools.lru_cache(maxsize=None)
+def _drivability(root_str: str) -> tuple[bool, str]:
+    """(is_drivable, reason) for the checkout at *root_str*.
+
+    Cached per root so every skipif-gated module (and every call site that
+    only needs the bool) pays at most one subprocess per process, not one
+    per test. The two failure branches are kept textually distinguishable
+    on purpose -- "checkout not found" and "found but not importable (no
+    environment)" describe different problems for someone reading a `-rs`
+    skip list to diagnose, and collapsing them back into one generic
+    "unavailable" string is the exact defect this function replaces.
+    """
+    root = Path(root_str)
+    if not (root / "colleague").is_dir():
+        return False, f"colleague checkout not found at {root}"
+
+    argv = _import_probe_argv(root)
+    try:
+        proc = subprocess.run(  # nosec B603 - fixed argv, no shell
+            argv,
+            capture_output=True,
+            text=True,
+            timeout=_AVAILABILITY_PROBE_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, (
+            f"colleague found at {root} but its interpreter could not be launched: {exc}"
+        )
+
+    if proc.returncode != 0:
+        detail = proc.stderr.strip().splitlines()[-1] if proc.stderr.strip() else "import failed"
+        return False, f"colleague found at {root} but not importable (no environment): {detail}"
+
+    return True, f"colleague at {root} is importable"
+
+
 def colleague_available(root: Path = DEFAULT_COLLEAGUE_ROOT) -> bool:
-    """True when *root* looks like a colleague checkout this adapter can drive."""
-    return (root / "colleague").is_dir()
+    """True when *root* is not just PRESENT but DRIVABLE.
+
+    "Present" (a ``colleague/`` directory exists) is not enough:
+    :class:`ColleagueToolProvider` spawns colleague's OWN interpreter so
+    ``agentfront`` resolves, and a bare ``git clone`` (exactly what a CI
+    checkout produces) has the directory but no materialized environment.
+    Treating that as "available" would let the live tests run and FAIL on a
+    plain clone instead of skipping -- a skip is visible and honest; a red
+    CI run on a machine that merely lacks an environment sends people
+    hunting for a bug that is not there. This actually resolves the
+    interpreter the adapter would use and confirms ``colleague.tools``
+    imports in it.
+    """
+    drivable, _ = _drivability(str(root))
+    return drivable
+
+
+def colleague_unavailable_reason(root: Path = DEFAULT_COLLEAGUE_ROOT) -> str:
+    """Why :func:`colleague_available` returned False for *root*.
+
+    Distinguishes "colleague checkout not found" from "colleague found but
+    not importable (no environment)" -- the two skip reasons callers should
+    surface separately in ``pytest.mark.skipif(..., reason=...)`` so a `-rs`
+    skip list lets a reader tell "nobody provided colleague" apart from
+    "colleague is there but unusable". Returns "" when actually available.
+    """
+    drivable, reason = _drivability(str(root))
+    return "" if drivable else reason
 
 
 class ColleagueToolProvider:

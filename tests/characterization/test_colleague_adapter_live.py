@@ -21,20 +21,14 @@ import shutil
 import pytest
 
 from tests.characterization.colleague_adapter import (
-    DEFAULT_COLLEAGUE_ROOT,
     ColleagueToolProvider,
     colleague_available,
+    colleague_unavailable_reason,
 )
 from tests.characterization.fixtures import load_behavior
 from tests.characterization.harness import ToolCall
 
-pytestmark = pytest.mark.skipif(
-    not colleague_available(),
-    reason=(
-        f"no colleague checkout at {DEFAULT_COLLEAGUE_ROOT} "
-        "(set SHELL_CLI_COLLEAGUE_ROOT to point elsewhere)"
-    ),
-)
+pytestmark = pytest.mark.skipif(not colleague_available(), reason=colleague_unavailable_reason())
 
 
 @pytest.fixture

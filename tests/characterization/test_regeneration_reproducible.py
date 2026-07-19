@@ -17,7 +17,11 @@ from pathlib import Path
 
 import pytest
 
-from tests.characterization.colleague_adapter import DEFAULT_COLLEAGUE_ROOT, colleague_available
+from tests.characterization.colleague_adapter import (
+    DEFAULT_COLLEAGUE_ROOT,
+    colleague_available,
+    colleague_unavailable_reason,
+)
 from tests.characterization.fixtures import FIXTURES_DIR
 
 _GENERATOR_PATH = Path(__file__).resolve().parents[2] / "scripts" / "capture_colleague_baseline.py"
@@ -34,14 +38,7 @@ def _load_generator():
 
 generator = _load_generator()
 
-pytestmark = pytest.mark.skipif(
-    not colleague_available(),
-    reason=(
-        f"no colleague checkout at {DEFAULT_COLLEAGUE_ROOT} "
-        "(set SHELL_CLI_COLLEAGUE_ROOT to point elsewhere) -- CI does not have one, "
-        "see tests/test_colleague_inventory.py for the same constraint"
-    ),
-)
+pytestmark = pytest.mark.skipif(not colleague_available(), reason=colleague_unavailable_reason())
 
 
 def test_pinned_sha_matches_the_observed_checkout():
