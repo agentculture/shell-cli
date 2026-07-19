@@ -74,6 +74,102 @@ jobs:
       - name: afi rubric gate
         run: uv run teken cli doctor . --strict
 
+  inventory-gate:
+    # The known-debt gate for colleague's process-spawn paths.
+    #
+    # WHY: shell-cli exists to become the single mediated local-operations
+    # plane. That only holds if colleague stops growing *new* unmediated
+    # subprocess paths while the known ones migrate. This job fails the moment
+    # an unclassified spawn path appears, and publishes `debt_remaining` — the
+    # count of modules still owning their own spawn — on every run, so the
+    # number trends visibly toward the Milestone 3 target of zero.
+    #
+    # This job REPORTS debt; it does not fail on it. Driving 13 -> 0 is
+    # Milestone 3 work, not a gate today.
+    #
+    # agentculture/colleague is public, so the gate clones it at the pinned SHA
+    # rather than depending on a local checkout. If the clone fails the job
+    # fails loudly — a gate that silently no-ops is worse than no gate.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      # Single source of truth for the pin: the committed scanner.
+      - name: Read pinned colleague SHA
+        id: pin
+        run: |
+          set -euo pipefail
+          SHA=$(python3 -c "
+          import re, pathlib
+          src = pathlib.Path('scripts/colleague_inventory.py').read_text()
+          m = re.search(r'^PINNED_SHA = \"([0-9a-f]{40})\"$', src, re.M)
+          if not m:
+              raise SystemExit('PINNED_SHA not found in scripts/colleague_inventory.py')
+          print(m.group(1))
+          ")
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Pinned colleague SHA: $SHA"
+
+      # A clone failure fails the job here, before the gate can no-op.
+      - name: Clone colleague at the pinned SHA
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: agentculture/colleague
+          ref: ${{ steps.pin.outputs.sha }}
+          path: .colleague-src
+          fetch-depth: 1
+
+      - name: Inventory colleague spawn paths
+        run: |
+          set -euo pipefail
+          python3 scripts/colleague_inventory.py .colleague-src --json | tee inventory.json
+          # Prove we actually scanned the pinned commit. Without this the gate
+          # could pass against some other tree and nobody would notice.
+          python3 -c "
+          import json, sys
+          d = json.load(open('inventory.json'))
+          if not d['sha_matches']:
+              print('::error::scanned {} but pinned {}'.format(
+                  d['observed_sha'], d['pinned_sha']))
+              sys.exit(1)
+          "
+
+      # Published BEFORE the gate runs, so the counter appears even on a
+      # failing run.
+      - name: Publish debt_remaining
+        run: |
+          set -euo pipefail
+          DEBT=$(python3 -c "import json; print(json.load(open('inventory.json'))['debt_remaining'])")
+          SITES=$(python3 -c "import json; print(json.load(open('inventory.json'))['spawn_sites'])")
+          MODS=$(python3 -c "import json; print(json.load(open('inventory.json'))['modules'])")
+
+          echo "::notice title=colleague spawn debt::debt_remaining=$DEBT (target 0 by Milestone 3) — $SITES spawn sites across $MODS modules"
+
+          {
+            echo "## colleague process-spawn inventory"
+            echo
+            echo "| metric | value |"
+            echo "| --- | --- |"
+            echo "| spawn sites | $SITES |"
+            echo "| modules | $MODS |"
+            echo "| **debt_remaining** | **$DEBT** (target 0 by Milestone 3) |"
+            echo
+            echo "Modules still owning their own spawn:"
+            echo
+            echo '```'
+            python3 -c "import json; print('\n'.join(json.load(open('inventory.json'))['debt_modules']))"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Gate — no unclassified spawn paths
+        run: python3 scripts/colleague_inventory.py .colleague-src --check
+
   version-check:
     # Only run on PR events. On push to main after a merged PR, the comparison
     # would always fail (PR_VERSION == MAIN_VERSION because HEAD and origin/main
