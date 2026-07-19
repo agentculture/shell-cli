@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.1] - 2026-07-19
+
+### Fixed
+
+- `test_operation_ids_are_stable_and_unique` asserted `operation.id == operation.id` — an expression compared against itself. Since `id` is a plain frozen-dataclass field rather than a property, reading it twice cannot differ, so the assertion could never fail and pinned nothing. It now asserts stability across the derivations where an id could actually be lost (a JSON round-trip and a field-level `replace`), which matters because the id is the key an evidence record is filed under. Verified by mutation: making `from_dict` mint a fresh id fails the new test and passed the old one.
+
 ## [0.13.0] - 2026-07-19
 
 ### Added

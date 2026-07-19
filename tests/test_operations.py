@@ -14,6 +14,7 @@ shape of the dataclasses:
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
@@ -126,8 +127,23 @@ def test_apply_defaults_to_false() -> None:
 
 
 def test_operation_ids_are_stable_and_unique() -> None:
+    """An id is minted once, survives derivation, and is never shared.
+
+    Stability is asserted across the derivations that really occur — a JSON
+    round-trip and a field-level ``replace`` — because that is where an id could
+    actually be lost. An earlier version read ``operation.id`` twice and compared
+    the results, which a frozen dataclass field cannot fail: it asserted nothing.
+
+    This matters beyond tidiness. The id is the key an evidence record is filed
+    under, so an operation that acquires a new one partway through the pipeline
+    detaches its record from what the caller asked for. ``apply_rewrite`` refuses
+    a rewrite that changes ``id`` for the same reason.
+    """
     operation = Operation(kind="fs.read")
-    assert operation.id == operation.id
+
+    assert Operation.from_dict(operation.to_dict()).id == operation.id
+    assert replace(operation, apply=True).id == operation.id
+
     assert Operation(kind="fs.read").id != operation.id
 
 
