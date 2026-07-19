@@ -20,10 +20,10 @@ Usage::
     python3 scripts/colleague_inventory.py /path/to/colleague --check
 
 ``--check`` exits 1 when an unclassified spawn path exists, which is what CI
-runs as a known-debt gate. Exit 2 is reserved for an environment error (a
-missing or unreadable checkout) so CI can distinguish "a new unclassified path
-landed" from "the clone is broken" — a gate that silently no-ops is worse than
-no gate.
+runs as a known-debt gate. Exit 2 is reserved for a scanner/environment error
+(a missing or unreadable checkout, or a file that could not be parsed) so CI
+can distinguish "a new unclassified path landed" from "the scan itself cannot
+be trusted" — a gate that silently no-ops is worse than no gate.
 """
 
 from __future__ import annotations
@@ -34,15 +34,18 @@ import json
 import subprocess  # nosec B404 - reads git metadata from a local checkout
 import sys
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePath
 
 # The commit this inventory was recorded against. Reproducing the numbers on a
 # different commit is expected to differ — that is the point of pinning.
 PINNED_SHA = "28fee290c51fc4310b9fc576981809ad5c3132c6"
 PINNED_VERSION = "1.51.0"
 
-# Callables that create a process. Matched on the dotted attribute path, so
-# ``subprocess.run`` matches and a local variable named ``run`` does not.
+# Callables that create a process. Matched on the *resolved* dotted path: call
+# targets are first mapped back through the module's own import statements, so
+# ``sp.run`` (after ``import subprocess as sp``) and a bare ``run`` (after
+# ``from subprocess import run``) both resolve to ``subprocess.run``, while a
+# locally defined ``run`` — bound by no import — does not.
 _SPAWN_CALLS = {
     "subprocess.run",
     "subprocess.Popen",
@@ -110,10 +113,29 @@ class Inventory:
     findings: list[Finding] = field(default_factory=list)
     modules: set[str] = field(default_factory=set)
     unclassified: list[Finding] = field(default_factory=list)
+    # module -> why it could not be scanned. A non-empty map means the scan was
+    # PARTIAL, so no verdict derived from it can be trusted.
+    skipped: dict[str, str] = field(default_factory=dict)
 
     @property
     def debt_modules(self) -> set[str]:
         return {m for m in self.modules if ALLOWLIST.get(m, ("", False))[1]}
+
+
+class ScanSkipped(Exception):
+    """A single file could not be parsed. Recorded, never swallowed."""
+
+
+def module_key(path: PurePath, pkg: PurePath) -> str:
+    """Package-relative module key, always forward-slash separated.
+
+    ``str(path.relative_to(pkg))`` renders with the *host* separator, so on
+    Windows a nested module becomes ``resident\\steward.py`` and can never match
+    the forward-slash ALLOWLIST key ``resident/steward.py`` — turning a
+    classified module into a false "unclassified" and failing CI for the wrong
+    reason. ALLOWLIST keys are POSIX form; normalize toward them.
+    """
+    return path.relative_to(pkg).as_posix()
 
 
 def _dotted(node: ast.AST) -> str:
@@ -128,17 +150,75 @@ def _dotted(node: ast.AST) -> str:
     return ""
 
 
+def _import_bindings(tree: ast.Module) -> tuple[dict[str, str], dict[str, str]]:
+    """Map local names back to the module paths their imports bound them to.
+
+    Returns ``(module_aliases, direct_names)``:
+
+    * ``module_aliases`` — ``import subprocess as sp`` -> ``{"sp": "subprocess"}``
+      (and ``import subprocess`` -> ``{"subprocess": "subprocess"}``).
+    * ``direct_names`` — ``from subprocess import run as r`` ->
+      ``{"r": "subprocess.run"}``.
+
+    Only real ``import``/``from`` statements contribute, which is exactly what
+    keeps a locally defined ``def run(...)`` out of the map — and therefore out
+    of the findings.
+
+    Relative imports (``from .subprocess import run``) are ignored: they name a
+    module inside colleague, not the stdlib one.
+    """
+    module_aliases: dict[str, str] = {}
+    direct_names: dict[str, str] = {}
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                # `import os.path` binds the top-level name `os`.
+                bound = alias.asname or alias.name.split(".")[0]
+                target = alias.name if alias.asname else alias.name.split(".")[0]
+                module_aliases[bound] = target
+        elif isinstance(node, ast.ImportFrom):
+            if node.level or not node.module:
+                continue
+            for alias in node.names:
+                direct_names[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+
+    return module_aliases, direct_names
+
+
+def _resolve_call(func: ast.AST, module_aliases: dict[str, str], direct: dict[str, str]) -> str:
+    """Resolve a call target to its dotted stdlib path, or '' if unresolvable."""
+    if isinstance(func, ast.Name):
+        # A bare call is a spawn only if an import bound that name to one.
+        return direct.get(func.id, "")
+
+    if isinstance(func, ast.Attribute):
+        dotted = _dotted(func)
+        if not dotted:
+            return ""
+        base, _, rest = dotted.partition(".")
+        # An unbound base falls through as itself: `subprocess.run` in a module
+        # that never imported subprocess still reads as a spawn. Fail closed —
+        # this is a gate.
+        return f"{module_aliases.get(base, base)}.{rest}"
+
+    return ""
+
+
 def scan_file(path: Path, rel: str) -> list[Finding]:
+    """Findings for one module. Raises ScanSkipped if it cannot be parsed."""
     try:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    except (SyntaxError, UnicodeDecodeError):
-        return []
+    except (SyntaxError, UnicodeDecodeError) as exc:
+        raise ScanSkipped(f"{type(exc).__name__}: {exc}") from exc
+
+    module_aliases, direct = _import_bindings(tree)
 
     found: list[Finding] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
-        name = _dotted(node.func)
+        name = _resolve_call(node.func, module_aliases, direct)
         if name not in _SPAWN_CALLS:
             continue
         uses_shell = any(
@@ -159,8 +239,17 @@ def scan(root: Path) -> Inventory:
 
     inv = Inventory()
     for path in sorted(pkg.rglob("*.py")):
-        rel = str(path.relative_to(pkg))
-        for finding in scan_file(path, rel):
+        rel = module_key(path, pkg)
+        try:
+            findings = scan_file(path, rel)
+        except ScanSkipped as exc:
+            # Never fail open: an unread file is recorded, not treated as clean.
+            inv.skipped[rel] = str(exc)
+            continue
+        except OSError as exc:
+            inv.skipped[rel] = f"{type(exc).__name__}: {exc}"
+            continue
+        for finding in findings:
             inv.findings.append(finding)
             inv.modules.add(rel)
             if rel not in ALLOWLIST:
@@ -222,6 +311,10 @@ def main(argv: list[str] | None = None) -> int:
         "unclassified": [f"{f.module}:{f.line} ({f.call})" for f in inv.unclassified],
         "debt_modules": sorted(inv.debt_modules),
         "debt_remaining": len(inv.debt_modules),
+        # A non-empty list means the scan was partial: every count above is a
+        # lower bound, not a measurement.
+        "skipped": [f"{module} ({reason})" for module, reason in sorted(inv.skipped.items())],
+        "skipped_count": len(inv.skipped),
     }
 
     if args.as_json:
@@ -239,8 +332,28 @@ def main(argv: list[str] | None = None) -> int:
             print("  UNCLASSIFIED (fails --check):")
             for entry in payload["unclassified"]:
                 print(f"    {entry}")
+        if inv.skipped:
+            print("  SKIPPED — scan is PARTIAL, counts above are a lower bound:")
+            for entry in payload["skipped"]:
+                print(f"    {entry}")
 
-    if args.check and inv.unclassified:
+    if not args.check:
+        return 0
+
+    if inv.skipped:
+        # Exit 2, not 1: the scanner could not read the whole checkout, so it
+        # has no verdict to give. Reporting "clean" here would be fail-open.
+        print(
+            f"\nerror: {len(inv.skipped)} file(s) could not be scanned; the inventory is partial",
+            file=sys.stderr,
+        )
+        print(
+            "hint: fix or exclude the unparseable file — a partial scan cannot gate anything",
+            file=sys.stderr,
+        )
+        return 2
+
+    if inv.unclassified:
         print(
             f"\nerror: {len(inv.unclassified)} unclassified spawn path(s)",
             file=sys.stderr,

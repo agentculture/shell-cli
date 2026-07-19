@@ -15,7 +15,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import pytest
 
@@ -50,6 +50,7 @@ def _fixture(tmp_path: Path, modules: dict[str, str]) -> Path:
 _SPAWNS = "import subprocess\n\n\ndef go():\n    subprocess.run(['true'], check=False)\n"
 _SPAWNS_SHELL = "import subprocess\n\n\ndef go():\n    subprocess.run('true', shell=True)\n"
 _INERT = "def go():\n    return 'subprocess.run is only a string here'\n"
+_BROKEN = "def (:\n"
 
 
 # --- the failing direction: a NEW unclassified spawn path ------------------
@@ -167,12 +168,67 @@ def test_missing_colleague_package_is_an_environment_error(tmp_path, capsys):
     assert "Traceback" not in err
 
 
-def test_unparseable_module_is_skipped_not_fatal(tmp_path):
-    """A syntax error in colleague must not crash the gate."""
-    root = _fixture(tmp_path, {"broken.py": "def (:\n", "tools.py": _SPAWNS})
+def test_unparseable_module_is_recorded_as_skipped_not_fatal(tmp_path):
+    """A syntax error must not crash the gate — and must not be silent either.
+
+    Returning [] for an unparseable file is fail-OPEN: part of the checkout was
+    never scanned, yet `--check` would pass and `debt_remaining` would look
+    clean. The gate must say which files it could not read.
+    """
+    root = _fixture(tmp_path, {"broken.py": _BROKEN, "tools.py": _SPAWNS})
 
     inv = inventory.scan(root)
+
     assert inv.modules == {"tools.py"}
+    assert "broken.py" in inv.skipped
+    assert "SyntaxError" in inv.skipped["broken.py"]
+
+
+def test_check_fails_with_exit_2_when_a_file_was_skipped(tmp_path, capsys):
+    """A partial scan cannot be trusted, so `--check` fails with exit 2.
+
+    Exit 2 (the scanner itself is broken) is deliberately distinct from exit 1
+    (the scan ran and found an unclassified path), matching the convention
+    already used for a missing checkout.
+    """
+    root = _fixture(tmp_path, {"broken.py": _BROKEN, "tools.py": _SPAWNS})
+
+    assert inventory.main([str(root), "--check"]) == 2
+
+    err = capsys.readouterr().err
+    assert "error:" in err
+    assert "hint:" in err
+    assert "Traceback" not in err
+
+
+def test_skipped_files_win_over_unclassified_paths(tmp_path):
+    """An untrustworthy scan reports exit 2, not the exit-1 gate verdict."""
+    root = _fixture(tmp_path, {"broken.py": _BROKEN, "rogue.py": _SPAWNS})
+
+    assert inventory.main([str(root), "--check"]) == 2
+
+
+def test_skipped_files_are_published_in_json_and_text(tmp_path, capsys):
+    """CI must be able to see a degraded scan in both output modes."""
+    root = _fixture(tmp_path, {"broken.py": _BROKEN})
+
+    assert inventory.main([str(root), "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["skipped_count"] == 1
+    assert any("broken.py" in entry for entry in payload["skipped"])
+
+    assert inventory.main([str(root)]) == 0
+    assert "broken.py" in capsys.readouterr().out
+
+
+def test_clean_scan_reports_no_skips(tmp_path, capsys):
+    """The skipped surface stays empty when every file parses."""
+    root = _fixture(tmp_path, {"tools.py": _SPAWNS})
+
+    assert inventory.main([str(root), "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["skipped"] == []
+    assert payload["skipped_count"] == 0
 
 
 def test_local_name_shadowing_a_spawn_call_is_not_counted(tmp_path):
@@ -206,3 +262,113 @@ def test_every_spawn_shape_is_detected(tmp_path, source):
     root = _fixture(tmp_path, {"rogue.py": source})
 
     assert inventory.main([str(root), "--check"]) == 1
+
+
+# --- import aliasing: the evasion the gate must not have -------------------
+
+
+@pytest.mark.parametrize(
+    ("source", "call"),
+    [
+        ("import subprocess as sp\nsp.run(['true'])\n", "subprocess.run"),
+        ("import subprocess as sp\nsp.Popen(['true'])\n", "subprocess.Popen"),
+        ("from subprocess import run\nrun(['true'])\n", "subprocess.run"),
+        ("from subprocess import run as r\nr(['true'])\n", "subprocess.run"),
+        ("from subprocess import Popen as P\nP(['true'])\n", "subprocess.Popen"),
+        ("from os import system\nsystem('true')\n", "os.system"),
+        ("import os as _o\n_o.system('true')\n", "os.system"),
+        (
+            "import asyncio as aio\naio.create_subprocess_shell('true')\n",
+            "asyncio.create_subprocess_shell",
+        ),
+        (
+            "from asyncio import create_subprocess_exec as cse\ncse('true')\n",
+            "asyncio.create_subprocess_exec",
+        ),
+    ],
+)
+def test_aliased_imports_do_not_evade_the_scanner(tmp_path, source, call):
+    """`import subprocess as sp` must not launder a spawn past the gate.
+
+    Matching only the literal dotted text is a false negative by construction,
+    and a false negative defeats the entire purpose of an enforcement gate.
+    """
+    root = _fixture(tmp_path, {"rogue.py": source})
+
+    inv = inventory.scan(root)
+
+    assert [f.call for f in inv.findings] == [call]
+    assert [f.module for f in inv.unclassified] == ["rogue.py"]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import subprocess as sp\nsp.run(['true'])\n",
+        "from subprocess import run\nrun(['true'])\n",
+    ],
+)
+def test_check_fails_on_an_aliased_unclassified_spawn(tmp_path, source):
+    """End to end: the gate exits 1, it does not merely record the finding."""
+    root = _fixture(tmp_path, {"rogue.py": source})
+
+    assert inventory.main([str(root), "--check"]) == 1
+
+
+def test_aliased_shell_true_is_still_surfaced(tmp_path, capsys):
+    """shell=True detection must survive the alias resolution."""
+    root = _fixture(tmp_path, {"hooks.py": "import subprocess as sp\nsp.run('x', shell=True)\n"})
+
+    assert inventory.main([str(root), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["shell_true_sites"] == ["hooks.py:2"]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        # A local def named `run` — never imported from subprocess.
+        "def run(x):\n    pass\n\n\nrun(['true'])\n",
+        # A same-named function from an unrelated module.
+        "from mytasks import run\nrun(['true'])\n",
+        # A relative import that merely happens to be spelled `subprocess`.
+        "from .subprocess import run\nrun(['true'])\n",
+        # A method call on an object, not the module.
+        "class C:\n    def run(self):\n        pass\n\n\nC().run()\n",
+        # An attribute on a local object that shadows nothing imported.
+        "import mything as os\nos.system('true')\n",
+    ],
+)
+def test_unimported_names_are_not_false_positives(tmp_path, source):
+    """Binding resolution must come from real import statements only."""
+    root = _fixture(tmp_path, {"rogue.py": source})
+
+    assert inventory.scan(root).findings == []
+
+
+# --- module keys are POSIX-normalized, on every host -----------------------
+
+
+def test_module_key_is_posix_on_a_windows_style_path():
+    """`str(path.relative_to(pkg))` yields `resident\\steward.py` on Windows,
+    which can never match the forward-slash ALLOWLIST key — a false
+    'unclassified' and a spurious gate failure. Assert against a pure Windows
+    path so the guarantee does not depend on the host separator."""
+    pkg = PureWindowsPath(r"C:\src\colleague\colleague")
+    path = pkg / "resident" / "steward.py"
+
+    key = inventory.module_key(path, pkg)
+
+    assert key == "resident/steward.py"
+    assert key in inventory.ALLOWLIST
+
+
+def test_module_key_is_stable_on_posix_paths():
+    pkg = PurePosixPath("/src/colleague/colleague")
+
+    assert inventory.module_key(pkg / "tools.py", pkg) == "tools.py"
+    assert inventory.module_key(pkg / "resident" / "steward.py", pkg) == "resident/steward.py"
+
+
+def test_allowlist_keys_are_posix_form():
+    """The ALLOWLIST is the contract module_key normalizes toward."""
+    assert all("\\" not in key for key in inventory.ALLOWLIST)
