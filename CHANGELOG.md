@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.1] - 2026-07-19
+
+### Fixed
+
+- `colleague_available()` verified only that a `colleague/` directory existed, while the characterization adapter needs colleague importable in its own interpreter. Against a bare clone — exactly what CI produces — it returned True and the live tests FAILED instead of skipping. It now verifies drivability by importing in the resolved interpreter with `--no-sync`, caches per root, and reports distinguishable skip reasons for not-found versus found-but-not-importable (t74a fixup).
+- Dropped the hardcoded `/home/spark/git/colleague` default in favour of `$SHELL_CLI_COLLEAGUE_ROOT` then sibling-checkout discovery anchored via `git rev-parse --git-common-dir`, so discovery resolves correctly from inside a linked worktree. A wrong guess can now only change a skip reason, never cause a failure on another machine (t74a fixup).
+
 ## [0.10.0] - 2026-07-19
 
 ### Added
