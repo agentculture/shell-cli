@@ -643,7 +643,7 @@ def test_handler_packages_predeclare_no_exports(module_name: str) -> None:
     assert module.__all__ == ()
     public = [
         name
-        for name in vars(module)
-        if not name.startswith("_") and not isinstance(getattr(module, name), types.ModuleType)
+        for name, value in vars(module).items()
+        if not name.startswith("_") and not isinstance(value, types.ModuleType)
     ]
     assert public == [], f"{module_name} predeclares exports: {public}"

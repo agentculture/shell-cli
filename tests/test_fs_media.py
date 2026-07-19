@@ -19,6 +19,11 @@ from shell.operations import Operation, OperationIntent, handler_for, registered
 from shell.results import OperationStatus
 from shell.runners.host import HostRunner
 
+# Importing the module is what registers the ``fs.media`` handler. Relying on
+# another test module to have imported it first passes serially and fails under
+# ``pytest -n auto``, where a worker may run only this file.
+import shell.fs.media  # noqa: E402,F401  isort:skip
+
 
 @pytest.fixture
 def env(tmp_path: Path) -> Environment:

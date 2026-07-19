@@ -311,21 +311,21 @@ def test_a_rewrite_that_raises_is_a_failed_result_not_an_exception(
 def test_a_rewrite_may_not_change_the_operation_kind(registry, env: Environment) -> None:
     """A kind change would move the operation out of its own gate's jurisdiction.
 
-    ``process.shell`` is gated by the ``run_command`` policy; ``fs.read`` is
+    ``process.shell`` is gated by the ``run_command`` policy; ``fs.example`` is
     deliberately not gated at all. If a rewrite could relabel one as the other it
     would not be bending the rule, it would be selecting which rule applies.
     """
     shell_handler = _Recorder()
     fs_handler = _Recorder()
     registry("process.shell", run=shell_handler)
-    registry("fs.read", intent=OperationIntent.OBSERVE, run=fs_handler)
+    registry("fs.example", intent=OperationIntent.OBSERVE, run=fs_handler)
 
     result = operations.execute(
         Operation(kind="process.shell", arguments={"command": "rm -rf /"}, apply=True),
         env,
         policy=_deny_rm(),
         rewrite=lambda op: Operation(
-            kind="fs.read",
+            kind="fs.example",
             arguments={"command": "rm -rf /"},
             intent=op.intent,
             profile=op.profile,
@@ -410,10 +410,10 @@ def test_the_mapping_form_has_no_channel_for_a_kind_change(env: Environment) -> 
     """
     original = Operation(kind="process.shell", arguments={"command": "git status"})
 
-    rewritten = apply_rewrite(original, {"kind": "fs.read", "command": "git diff"})
+    rewritten = apply_rewrite(original, {"kind": "fs.example", "command": "git diff"})
 
     assert rewritten.kind == "process.shell"
-    assert rewritten.arguments == {"kind": "fs.read", "command": "git diff"}
+    assert rewritten.arguments == {"kind": "fs.example", "command": "git diff"}
     assert rewritten.id == original.id
 
 
@@ -447,7 +447,7 @@ def test_apply_rewrite_rejects_a_kind_change_loudly() -> None:
     original = Operation(kind="process.shell", arguments={})
 
     with pytest.raises(RewriteRejected, match="may not change the operation kind"):
-        apply_rewrite(original, Operation(kind="fs.read", arguments={}, id=original.id))
+        apply_rewrite(original, Operation(kind="fs.example", arguments={}, id=original.id))
 
 
 # --- an untrustworthy policy fails closed, within its jurisdiction -----------
@@ -503,10 +503,10 @@ def test_an_untrustworthy_policy_does_not_deny_a_carved_out_operation(
     degradation is still reported on the verdict rather than passing in silence.
     """
     handler = _Recorder()
-    registry("fs.read", intent=OperationIntent.OBSERVE, run=handler)
+    registry("fs.example", intent=OperationIntent.OBSERVE, run=handler)
 
     result = operations.execute(
-        Operation(kind="fs.read", arguments={"path": "README.md"}),
+        Operation(kind="fs.example", arguments={"path": "README.md"}),
         env,
         policy=_malformed_policy(tmp_path),
     )
@@ -568,11 +568,11 @@ def test_the_filesystem_carve_out_is_preserved(registry, env: Environment) -> No
     would be a different product.
     """
     handler = _Recorder()
-    registry("fs.read", intent=OperationIntent.OBSERVE, run=handler)
+    registry("fs.example", intent=OperationIntent.OBSERVE, run=handler)
 
     # A policy that denies everything it can: an empty allow list that is present.
     result = operations.execute(
-        Operation(kind="fs.read", arguments={"path": "x", "command": "rm -rf /"}),
+        Operation(kind="fs.example", arguments={"path": "x", "command": "rm -rf /"}),
         env,
         policy=_policy(run_command={"allow": ["git"], "deny": ["rm"]}),
     )
@@ -718,7 +718,7 @@ def test_a_denied_operation_is_never_recorded_as_applied(registry, env: Environm
 def _rewrite_to_other_kind(op: Operation) -> Operation:
     from dataclasses import replace
 
-    return replace(op, kind="fs.read")
+    return replace(op, kind="fs.example")
 
 
 def _rewrite_that_raises(op: Operation) -> dict:
@@ -740,12 +740,12 @@ def test_a_failure_before_the_handler_was_entered_is_never_applied(
 
     Every one of these returns from ``execute`` *above* ``spec.run``. The first
     fix caught the denial path and left these three reporting ``applied=True``:
-    a rewrite rejected for trying to turn ``process.shell`` into ``fs.read``
+    a rewrite rejected for trying to turn ``process.shell`` into ``fs.example``
     would have been filed as an operation that was carried out.
     """
     handler = _Recorder()
     registry("process.shell", run=handler)
-    registry("fs.read", intent=OperationIntent.OBSERVE, run=_Recorder())
+    registry("fs.example", intent=OperationIntent.OBSERVE, run=_Recorder())
     records, sink = _sink()
 
     result = operations.execute(
