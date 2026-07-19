@@ -46,8 +46,23 @@ from shell.runners.host import HostRunner
 
 @pytest.fixture
 def registry() -> Iterator[Callable[..., str]]:
-    """Register throwaway operation kinds and clean them up afterwards."""
+    """Register throwaway operation kinds and clean them up afterwards.
+
+    These tests exercise dispatch with a *controllable* handler, and several of
+    them need a kind the ``run_command`` policy has jurisdiction over — so they
+    use real ``process.*`` names. Once the real handlers exist (``shell/process/
+    exec.py``, ``shell/process/shell.py``), importing them anywhere in the same
+    interpreter registers those names, and :func:`shell.operations.register`
+    refuses a duplicate.
+
+    So a name that is already taken is **shadowed and restored** rather than
+    renamed away. Renaming would move these tests onto a fake kind and quietly
+    stop pinning the jurisdiction of the gate over the kinds that matter, which
+    is the thing this module exists to guard. Restoration is unconditional, so a
+    later test in the same worker still sees the real handler.
+    """
     registered: list[str] = []
+    shadowed: dict[str, Any] = {}
 
     def _register(
         kind: str,
@@ -56,6 +71,12 @@ def registry() -> Iterator[Callable[..., str]]:
         run: Callable[[Operation, Environment], OperationResult],
         profile: ExecutionProfile = ExecutionProfile.PROJECT,
     ) -> str:
+        try:
+            shadowed[kind] = operations.handler_for(kind)
+        except operations.UnknownOperationKind:
+            pass
+        else:
+            operations.unregister(kind)
         operations.register(kind, intent=intent, default_profile=profile, run=run)
         registered.append(kind)
         return kind
@@ -64,6 +85,10 @@ def registry() -> Iterator[Callable[..., str]]:
 
     for kind in registered:
         operations.unregister(kind)
+    for kind, spec in shadowed.items():
+        operations.register(
+            kind, intent=spec.intent, default_profile=spec.default_profile, run=spec.run
+        )
 
 
 @pytest.fixture
