@@ -56,6 +56,7 @@ _CORE_MODULES = (
     "shell",
     "shell.cli",
     "shell.environment",
+    "shell.evidence",
     "shell.explain.catalog",
     "shell.fs",
     "shell.operations",
@@ -145,6 +146,7 @@ def test_no_third_party_imports() -> None:
         import shell  # noqa: F401
         import shell.cli  # noqa: F401
         import shell.environment  # noqa: F401
+        import shell.evidence  # noqa: F401
         import shell.explain.catalog  # noqa: F401
         import shell.fs  # noqa: F401
         import shell.operations  # noqa: F401
