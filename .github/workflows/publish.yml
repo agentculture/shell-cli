@@ -1,5 +1,18 @@
 name: Publish to PyPI
 
+# Publishing is gated on the COMPLETE quality suite, not just pytest.
+#
+# Before this workflow was hardened, `publish` needed only a `test` job
+# running `pytest`. Everything else that defines whether shell-cli is correct
+# — black, isort, flake8, bandit, markdownlint and the `teken cli doctor`
+# rubric gate — lived exclusively in tests.yml, and so could be red while a
+# release went out. PyPI is append-only: a bad version cannot be replaced,
+# only yanked. See docs/release-runbook.md.
+#
+# The `paths:` filter is effectively always true in practice, because the
+# repo rule is that every PR bumps `pyproject.toml`. It is kept as a backstop
+# so a push touching neither the package nor its metadata cannot release.
+
 on:
   push:
     branches: [main]
@@ -28,11 +41,104 @@ jobs:
 
       - run: uv run pytest -n auto -v
 
+  # Mirrors the `lint` job in tests.yml. Duplicated deliberately: `publish`
+  # must not be able to run while a gate is red, and a job defined in another
+  # workflow file cannot be named in `needs:`. Change a gate here and you must
+  # change it in tests.yml too.
+  gates:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '20'
+
+      - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
+
+      - run: uv python install 3.12
+
+      - run: uv sync
+
+      - name: black --check
+        run: uv run black --check shell tests
+
+      - name: isort --check
+        run: uv run isort --check-only shell tests
+
+      - name: flake8
+        run: uv run flake8 shell tests
+
+      - name: bandit
+        run: uv run bandit -c pyproject.toml -r shell
+
+      - name: markdownlint-cli2
+        run: |
+          npm install -g markdownlint-cli2@0.21.0
+          markdownlint-cli2 "**/*.md" "#node_modules" "#.local" "#.claude/skills" "#.teken"
+
+      - name: afi rubric gate
+        run: uv run teken cli doctor . --strict
+
+  # Build the wheel and prove it works from a CLEAN environment before any
+  # index sees it. `uv sync` installs from the source tree, so a green test
+  # suite says nothing about whether the built artifact imports, whether its
+  # console script is wired up, or what its metadata declares. This job is the
+  # only place that exercises the thing actually being published.
+  smoke:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
+
+      - run: uv python install 3.12
+
+      - name: Build the wheel
+        run: uv build
+
+      - name: Install the built wheel into a clean environment
+        run: |
+          python3 -m venv /tmp/smoke
+          /tmp/smoke/bin/python -m pip install --upgrade pip
+          /tmp/smoke/bin/python -m pip install dist/*.whl
+
+      # The core is pure-stdlib with `dependencies = []`. Asserting that
+      # against the INSTALLED wheel catches a dependency added to the built
+      # metadata, which a source-tree import check cannot see.
+      - name: Assert the published artifact declares zero runtime dependencies
+        run: |
+          /tmp/smoke/bin/python - <<'PY'
+          import importlib.metadata as md
+          import sys
+
+          deps = md.requires("shell-cli") or []
+          if deps:
+              print("::error::The built wheel declares runtime dependencies: %r" % (deps,))
+              print("shell-cli's core must stay pure-stdlib (pyproject dependencies = []).")
+              sys.exit(1)
+          print("OK - the built wheel declares no runtime dependencies.")
+          PY
+
+      # Import the package and drive the console script. The command is
+      # `shell`, NOT `shell-cli`; a regression here would ship a package whose
+      # documented entry point does not exist.
+      - name: Smoke-test the installed wheel
+        run: |
+          /tmp/smoke/bin/python -c "import shell; print('import shell OK')"
+          /tmp/smoke/bin/shell whoami --json
+          /tmp/smoke/bin/shell explain safety
+          echo "OK - installed wheel imports and its console script runs."
+
   test-publish:
     # Skip on fork PRs — no OIDC/environment context is available there, so the
     # publish step would fail and block external contributor CI.
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-    needs: test
+    needs: [test, gates, smoke]
     runs-on: ubuntu-latest
     environment: testpypi
     permissions:
@@ -67,7 +173,7 @@ jobs:
 
   publish:
     if: github.event_name == 'push'
-    needs: test
+    needs: [test, gates, smoke]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:

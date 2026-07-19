@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-07-19
+
+### Added
+
+- Release runbook (docs/release-runbook.md): the gate chain, the yank-and-fix-forward procedure, the colleague pin policy, and the security-fix exemption from the migration-proposal gate.
+- publish.yml: a gates job mirroring the full lint suite (black, isort, flake8, bandit, markdownlint, teken rubric), and a smoke job that installs the built wheel into a clean venv, asserts it declares zero runtime dependencies, and runs its console script.
+
+### Changed
+
+- publish.yml: the publish and test-publish jobs now depend on test + gates + smoke, so a release can no longer go out while any quality gate is red. Previously publish gated on pytest alone.
+
 ## [0.7.2] - 2026-07-18
 
 ### Fixed
