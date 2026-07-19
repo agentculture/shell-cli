@@ -43,8 +43,8 @@ _MISSION = [
 ]
 
 _STATUS = [
-    "scaffold — only the introspection verbs below are implemented",
-    "the six primitives, confinement, and policy are not extracted yet",
+    "only the introspection verbs below are implemented in the CLI",
+    "the library has the fs primitives, confinement, policy, evidence and HostRunner",
     "tracking issue: https://github.com/agentculture/shell-cli/issues/1",
 ]
 

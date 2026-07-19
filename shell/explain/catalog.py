@@ -25,9 +25,13 @@ terminal and watch the policy decide).
 
 ## Status
 
-Scaffold. The six primitives, the path confinement, and the approval policy are
-being extracted from `colleague` and are **not here yet** — only the
-introspection verbs below are implemented. See
+The library has the operation core: `fs.read`, `fs.list`, `fs.write`, `fs.edit`
+and `fs.media`, path confinement, the policy evaluator, the evidence contract,
+and `HostRunner` execution are built and green.
+
+**The CLI has not caught up** — only the introspection verbs below are
+implemented here. Process execution and the `env` / `fs` / `process` / `git` /
+`policy` / `operation` verb groups are not exposed yet. See
 <https://github.com/agentculture/shell-cli/issues/1>.
 
 ## Safety posture

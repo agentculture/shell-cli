@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-07-19
+
+### Added
+
+- `HostRunner.run_process` — commands spawn with `start_new_session=True` and lead their own process group; timeout and cancel escalate SIGTERM->group, bounded wait, SIGKILL->group, bounded wait. Termination is recorded as a PATH (steps, escalated, completed, group_signalled), not a fact (t80).
+- Per-platform orphan-prevention honesty carried as DATA on every outcome (`termination.orphan_prevention`), so a consumer never matches on `sys.platform`: POSIX reports `process-group` (real, but a descendant calling `setsid` escapes -- proven by test, and the runner then marks `output_complete=False` because that survivor holds the pipe open); Windows reports `direct-child-only`, where grandchildren can outlive the operation (t80).
+- `shell.fs.read` / `shell.fs.list` — line numbering PRECEDES truncation, matching colleague's recorded fix for its issue #240. Proven by reversing the implementation and observing the pin fail (t81).
+- `shell.fs.write` / `shell.fs.edit` — `bytes_written` is full content on write and replacement bytes only on edit, every number pinned against the committed colleague fixtures rather than hand-derived (t82).
+- `shell.fs.media` — vendors only `_MEDIA_TYPES`, `validate_attachment`, `build_part`. A test asserts `flatten_parts` and `IMAGE_TOKEN_ESTIMATE` are ABSENT, keeping the vendored slice from widening later (t83).
+- `check_write` is now wired: a write or edit targeting a configured read-only path is refused. This is path confinement, a different mechanism from the approvals gate, and the result still reads `UNGATED` because `fs.*` has no jurisdiction under that gate (t82).
+
+### Changed
+
+- Status surfaces (`CLAUDE.md`, `shell learn`, `shell overview`, `explain` root) said the repo was scaffold-only and the primitives were not extracted. Both were false. They now separate the two facts that were being conflated: the LIBRARY has the operation core, while the CLI still exposes only introspection verbs.
+- The bandit skip list is documented. B404/B603 are skipped deliberately (running subprocesses is this package's purpose), B602 (`shell=True`) is NOT skipped and remains enforced. An inline `# nosec B404`/`B603` here suppresses nothing and reads like a silenced finding.
+
+### Fixed
+
+- `test_handler_packages_predeclare_no_exports` asserted the live `shell.fs` namespace held no public attributes, which becomes impossible the moment any real submodule is imported -- Python binds it onto the parent package. Narrowed to non-module attributes, preserving what r8 actually guards: a stub or curated re-export declared in `__init__.py`.
+- `tests/test_fs_media.py` asserted on `handler_for('fs.media')` without importing the module that registers it, so it passed serially and failed under `pytest -n auto` where a worker may run only that file.
+
 ## [0.11.0] - 2026-07-19
 
 ### Added

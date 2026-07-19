@@ -322,16 +322,12 @@ class TestMediaVendorBoundary:
         """flatten_parts function is not defined in shell.fs.media."""
         import inspect
 
-        import shell.fs.media
-
         members = dict(inspect.getmembers(shell.fs.media))
         assert "flatten_parts" not in members
 
     def test_image_token_estimate_not_defined(self) -> None:
         """IMAGE_TOKEN_ESTIMATE constant is not defined in shell.fs.media."""
         import inspect
-
-        import shell.fs.media
 
         members = dict(inspect.getmembers(shell.fs.media))
         assert "IMAGE_TOKEN_ESTIMATE" not in members

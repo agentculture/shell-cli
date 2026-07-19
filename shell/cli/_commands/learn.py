@@ -31,8 +31,11 @@ relying on it.
 
 Status
 ------
-Scaffold: the six primitives, the path confinement, and the approval policy are
-not extracted yet. Only the introspection verbs below are implemented.
+The library has the operation core: fs.read/list/write/edit/media, the policy
+evaluator, the evidence contract, and HostRunner execution are built and green.
+The CLI has not caught up -- only the introspection verbs below are implemented.
+Process execution and the env/fs/process/git/policy/operation verb groups are
+not exposed here yet.
 See https://github.com/agentculture/shell-cli/issues/1
 
 Commands
@@ -79,8 +82,8 @@ def _as_json_payload() -> dict[str, object]:
             "and careless behaviour, not an adversarial one."
         ),
         "status": (
-            "scaffold — the six primitives, path confinement, and approval policy are "
-            "not extracted yet; only the introspection verbs are implemented"
+            "the operation core is built in the library (fs primitives, policy, "
+            "evidence, HostRunner); the CLI exposes only the introspection verbs so far"
         ),
         "commands": [
             {"path": ["whoami"], "summary": "Identity probe from culture.yaml."},

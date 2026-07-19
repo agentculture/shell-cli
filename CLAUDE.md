@@ -44,12 +44,33 @@ Identity is settled and must not drift: repo token `shell-cli`, console command
 
 ### Current state
 
-The repo is **scaffold only**. The agent-first CLI skeleton (`whoami`, `learn`,
-`explain`, `overview`, `doctor`, `cli`, `explain safety`) is real and green;
-**no operation, environment, policy, or runner has been built yet.** The CLI says
-so itself — `learn`, `overview`, and the `explain` root each carry a Status
-section. Keep those honest as the work lands; they are the first thing an agent
-consumer reads.
+**The operation core is built; the CLI has not caught up to it yet.** Keep those
+two facts separate — conflating them is how this section goes stale.
+
+Built and green in the **library** (Milestone 1, v0.11.0+):
+
+- `shell/operations.py` — `Operation`, the handler registry, and the lifecycle
+  pipeline: `normalize -> rewrite -> policy gate -> preview branch -> handler ->
+  evidence`. The gate is inside `execute`, on the post-rewrite operation.
+- `shell/results.py`, `shell/environment.py` — neutral results and the two-axis
+  environment.
+- `shell/policy.py` — the ported evaluator. Accepts pre-resolved candidate paths;
+  resolves no config-dir layout of its own.
+- `shell/evidence.py` — the evidence contract, wired into `execute`.
+- `shell/runners/host.py` — `HostRunner` with real execution: process groups,
+  timeout/cancel escalation, per-platform orphan-prevention honesty.
+- `shell/fs/` — `fs.read`, `fs.list`, `fs.write`, `fs.edit`, `fs.media`.
+
+**Not built yet:** `process.exec` / `process.shell` handlers (t84); the CLI noun
+groups `env` / `fs` / `process` / `git` / `policy` / `operation` (t85);
+`ContainerRunner` (Milestone 4); colleague delegation (Milestone 2).
+
+So the **CLI still exposes only the introspection verbs** — `whoami`, `learn`,
+`explain`, `overview`, `doctor`, `cli`. That is why `learn`, `overview`, and the
+`explain` root still carry a Status section saying so, and it remains accurate
+*about the CLI*. What is no longer true anywhere is "the primitives are not
+extracted yet." Keep those surfaces honest as t84/t85 land; they are the first
+thing an agent consumer reads.
 
 ## Commands
 
