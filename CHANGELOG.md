@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-07-19
+
+### Added
+
+- `process.exec` and `process.shell`. `process.exec` takes argv and accepts `project` or `control`; `process.shell` takes a model-authored string and accepts `project` ONLY — a shell re-interprets the string after the gate read it, so which program runs is not settled by what was gated, and a control operation cannot honestly be selected that way (t84).
+- Every process result carries `output["confinement"]` with `path_confined: false` for BOTH kinds. The argv-versus-shell difference shows up only in the other keys, deliberately, so nobody infers 'argv, therefore confined' (t84).
+- `shell policy check` and `shell policy explain` — both call the same gate function `execute()` uses, never a re-derivation that could drift. `explain` reports ungated kinds EXPLICITLY rather than by omission, because `UNGATED` and `ALLOWED` are distinct (t85).
+- `shell operation show` retrieves a persisted evidence record; `EXIT_ENV_ERROR` (exit 2) is now genuinely reachable, closing a documented-but-unreachable contract (t85).
+- `execute(..., reveal_secrets_in_result=True)` — an explicit opt-in for callers that need real output. Default is redaction, and a revealed secret still NEVER reaches the persisted record. The choice is recorded as `evidence.secret_handling` (`none_declared`/`redacted`/`revealed`) so an opt-in is visible rather than silent (t88).
+
+### Fixed
+
+- SECURITY: an exploitable gate bypass. `apply_rewrite`'s Operation branch returned the candidate verbatim, so `arguments` could be any Mapping — including one whose `__getitem__` returned a different value on each read. A rewrite could have the gate judge `git status` while the handler ran `rm -rf /`; the object-identity test still passed, because the object genuinely was the same and only its values were unstable. `Operation.__post_init__` now deep-freezes arguments into immutable JSON-safe values, so a hostile mapping is read exactly once at construction and every construction path is covered. Found by independent review before shipping, reproduced, and pinned by regression tests for both the top-level and nested cases. No consumer was wired to this package, so it was never reachable in production (t88).
+- SECURITY: declared secrets were scrubbed from the evidence record but NOT from the live `OperationResult`. Since a consumer renders result output for the model, the one path a declared secret was guaranteed to travel was the unprotected one. The live result is now scrubbed by default (t88).
+- A persisted record's on-disk body carried no `persistence` block, though the contract documents it as part of the record. The block is now written with the fields knowable before the write, and `persisted` is explicitly null on disk with a note — no second write, no mutate-after-write, atomicity unchanged. On-disk and returned bodies therefore have different integrity digests, which is correct: they are different bodies, and each validates against its own bytes (t88).
+- `--command`'s auto-derived argparse dest collided with the top-level subparser dest, so every `policy check` saw `args.command == None` regardless of dispatch (t85).
+- `explain safety` still said the four safety layers were 'not yet extracted... not shipped behaviour'. All four ship. Corrected, keeping separate the claim that remains true: there is no execution isolation, and a process group is cleanup, never containment.
+- A test asserted `process.shell` was unregistered — true only in the worktree that wrote it, before t84 merged. It encoded one worktree's registry state as a permanent property; repointed at a kind no slice will ever register.
+
 ## [0.12.0] - 2026-07-19
 
 ### Added
