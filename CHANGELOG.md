@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-07-19
+
+### Added
+
+- Policy is evaluated INSIDE `operations.execute`, on the post-rewrite operation. After the rewrite there is exactly one operation value bound, so gating one form while running another is unexpressible rather than merely discouraged — pinned by an object-identity test (t79).
+- `apply_rewrite` — a rewrite may change arguments only. A `kind` change is rejected on its own terms (it would move the operation out of one gate's jurisdiction into another's); every other field is protected by comparing argument-blanked copies, so fields added later are covered automatically (t79).
+- An untrustworthy policy snapshot fails closed for `process.*` with `matched_rule="policy.untrustworthy"`. The `fs.*` carve-out is NOT converted into a denial — no approvals.json can gate a structured read, so refusing one would enforce a rule that could never have existed (t79).
+- Evidence is captured for every terminal state including denied and previewed. A raising sink, a failed write, or a broken record-builder mark the record degraded and never overturn the operation's outcome (t79).
+- `execution.handler_entered` and `execution.handler_disposition` (`not_reached`/`completed`/`crashed`/`unstated`) — the dispatcher STATES how far it got rather than letting downstream infer it from status (t79).
+
+### Fixed
+
+- `execution.applied` was derived from status and reported `true` for operations that never reached the handler — a denied mutation, a rejected rewrite, a rewrite that raised, and an unknown kind were all recorded as applied. An auditor reading those records would conclude a blocked operation ran. `applied` is now three-valued: `true`, `false`, and `null` reserved for a handler that was entered and crashed, where partial application is genuinely unknown and either boolean would be a fabricated claim (t79).
+
 ## [0.10.1] - 2026-07-19
 
 ### Fixed
