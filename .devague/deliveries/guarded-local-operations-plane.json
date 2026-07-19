@@ -1,0 +1,48 @@
+{
+  "plan_slug": "guarded-local-operations-plane",
+  "schema_version": 1,
+  "created": "2026-07-19T01:13:43Z",
+  "updated": "2026-07-19T01:13:55Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "colleague is dropped from both the implementer and the reviewer role in this fan-out; Claude subagents implement, and independent review comes from SonarCloud plus Qodo on each PR",
+      "task_ref": "t73",
+      "reason": "The approved gate-2 split plan assigned t73/t75/t81-t83 to 'ask-colleague write --apply' and put 'ask-colleague review' on every task diff. Two consecutive colleague drives on well-scoped READ-ONLY tasks (explore 923ceb0bd061, review b507f26c5c80) both ended status=incomplete with steps=0, never calling finish. In each the local vllm-openai Qwen3.6-27B emitted a tool call as literal assistant text ('<read_file path=...>' and '<tool_call> run_command:') instead of a structured call. Notably 'colleague doctor --probe' reports tool_calling OK, so the probe is not representative of the drive path. A backend that completes zero steps on a read-only audit cannot be trusted to implement a CI gate or to review a security-relevant diff.",
+      "affects": [
+        "t75",
+        "t81",
+        "t82",
+        "t83"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up"
+    },
+    {
+      "id": "d2",
+      "what": "t72 and t73 start from partially-complete work rather than from scratch: CLAUDE.md was already rewritten and scripts/colleague_inventory.py already authored during the spec phase, so each task is reduced to its remaining delta",
+      "task_ref": "t72",
+      "reason": "The plan was written after the /scope->/think->/challenge->/spec-to-plan arc had already produced the CLAUDE.md operations-plane rewrite and the pinned AST inventory scanner as spec evidence. Treating t72/t73 as greenfield would mean deleting and re-authoring committed-quality work to satisfy the plan's narrative. t72's remaining delta is the issue #1 six-part plan post plus AGENTS.colleague.md/README.md alignment and the artifact-trail commit; t73's remaining delta is wiring scripts/colleague_inventory.py --check into tests.yml as a known-debt gate publishing debt_remaining.",
+      "affects": [
+        "t73"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d3",
+      "what": "PR ordering is forced to strict sequence rather than the plan's parallel wave 1: t71 alone, then t72, then t73",
+      "task_ref": "t71",
+      "reason": "publish.yml triggers on the pyproject.toml path and every PR must bump the version, so EVERY merge publishes to PyPI. The plan's wave 1 would have run t72 and t73 in parallel with the artifact-trail commit, but any merge landing before t71 would publish an unhardened release to an append-only index. t71 therefore merges strictly first and alone. This narrows realised parallelism at the start of the run but is required by t71's own acceptance criterion that it merge first.",
+      "affects": [
+        "t72",
+        "t73"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable"
+    }
+  ]
+}
