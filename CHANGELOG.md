@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.6] - 2026-07-19
+
+### Changed
+
+- Delivery summary: defined the status vocabulary (released / submitted / blocked / not ours) and corrected t72/t73 from open to merged; clarified that the deviation classifications are agent-proposed, not operator-confirmed; explained that the filename date is the plan creation date per the devague lane convention, not the run date.
+
 ## [0.8.5] - 2026-07-19
 
 ### Changed

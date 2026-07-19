@@ -1,7 +1,12 @@
 # Delivery Summary — guarded local operations plane
 
-plan: `guarded-local-operations-plane` · run: **partial (blocked)** · date: `2026-07-19`
+plan: `guarded-local-operations-plane` · run: **partial (blocked)**
 baseline: `.devague/plans/guarded-local-operations-plane.json` (19 confirmed tasks)
+
+**Dates.** The filename carries `2026-07-18`, the plan's creation date, so this
+artifact sorts alongside its siblings `docs/specs/2026-07-18-*` and
+`docs/plans/2026-07-18-*` — that is the devague lane convention, and the
+filename is not a run date. The workforce run itself executed on **2026-07-19**.
 
 ## Intent
 
@@ -20,15 +25,25 @@ Only confirmed tasks are listed. The plan's 68 rejected tasks from earlier
 iterations are excluded — `devague summary` currently renders them as planned
 work, which is a devague defect, not a record of intent.
 
+Status vocabulary, so the column means one thing:
+
+- **released** — merged to `main` and published to PyPI (every merge publishes)
+- **submitted** — implemented, gates green, open in a PR, not yet merged
+- **blocked** — cannot start; the dependency named is not satisfiable here
+- **not ours** — belongs to another repository
+
 | Plan task | Status | What actually landed |
 |---|---|---|
-| `t71` | **delivered** | PR #3, merged. `publish.yml` gains `gates` + `smoke`; both publish paths depend on `[test, gates, smoke]`. `docs/release-runbook.md`. Released 0.8.0. |
-| `t72` | **delivered** | PR #5, open and green. README/AGENTS/CLAUDE realigned to the operations-plane framing; WebGlass peer seam documented; devague artifact trail committed; six-part plan posted on #1. |
-| `t73` | **delivered** | PR #5, open and green. Scanner tracked; `inventory-gate` CI job live; 17 synthetic-fixture tests. |
-| `t69`, `t70` | **not started — not ours** | colleague-repo security lane. Not filed. See *Blocked* below. |
+| `t71` | **released** | PR #3 merged, 0.8.0. `publish.yml` gains `gates` + `smoke`; both publish paths depend on `[test, gates, smoke]`. `docs/release-runbook.md`. |
+| `t72` | **released** | PR #5 merged, 0.8.2. README/AGENTS/CLAUDE realigned to the operations-plane framing; WebGlass peer seam documented; devague artifact trail committed; six-part plan posted on #1. |
+| `t73` | **released** | PR #5 merged, 0.8.2. Scanner tracked; `inventory-gate` CI job live; synthetic-fixture tests. **Delivered, but see the adversarial live test below — it does not carry the guarantee `t73` claimed for it.** |
+| `t69`, `t70` | **not ours — not started** | colleague-repo security lane. Not filed. See *Blocked* below. |
 | `t74` | **blocked** | Requires a fixed colleague release (deps `t69`, `t70`). |
 | `t75`–`t85` | **blocked** | Transitively blocked behind `t74`. |
-| `t86`, `t87` | **blocked — not ours** | colleague-repo M2 cutover; additionally depends on all of M1. |
+| `t86`, `t87` | **not ours — blocked** | colleague-repo M2 cutover; additionally depends on all of M1. |
+
+Corrections to `t71`–`t73` (the Qodo review fixes and the scanner relabel) are
+**submitted** in PR #6 at 0.8.5, not yet merged.
 
 **3 of 19 confirmed tasks delivered. 12 blocked. 4 belong to another repository.**
 
@@ -152,17 +167,27 @@ Reported under *Drift From Plan* (`d1`). It contributed nothing to this run.
 
 ## Drift From Plan
 
-Three deviations recorded in devague's append-only ledger, `proposed` and
-awaiting operator `--confirm`. Human-readable record: issue #4.
+Three deviations recorded in devague's append-only ledger. Human-readable
+record: issue #4.
 
-- **`d1` (needs-follow-up)** — colleague dropped from the implementer and
-  reviewer roles. Two consecutive drives on read-only tasks completed **zero
-  steps**, emitting tool calls as literal assistant text. Claude subagents
-  implemented instead; SonarCloud and Qodo supplied independent review.
-- **`d2` (acceptable)** — `t72`/`t73` started from partially-complete work, since
-  the `CLAUDE.md` rewrite and the scanner were authored during the spec phase.
-- **`d3` (acceptable)** — PR ordering forced to strict sequence: every merge
-  publishes, so `t71` had to merge alone and first.
+**All three are `status: proposed`. None has been operator-confirmed, and none
+was self-confirmed.** The parenthetical on each line below is the
+`classification` field — *the classification the agent proposed*, not an
+operator verdict. Confirming a deviation is a user-only decision under devague's
+contract, exactly so an agent cannot ratify its own departure from the plan. The
+work proceeded on the operator's standing instruction to decide and file rather
+than halt; the ledger entries remain open until someone runs
+`devague deviate --confirm`.
+
+- **`d1` (proposed classification: needs-follow-up)** — colleague dropped from
+  the implementer and reviewer roles. Two consecutive drives on read-only tasks
+  completed **zero steps**, emitting tool calls as literal assistant text. Claude
+  subagents implemented instead; SonarCloud and Qodo supplied independent review.
+- **`d2` (proposed classification: acceptable)** — `t72`/`t73` started from
+  partially-complete work, since the `CLAUDE.md` rewrite and the scanner were
+  authored during the spec phase.
+- **`d3` (proposed classification: acceptable)** — PR ordering forced to strict
+  sequence: every merge publishes, so `t71` had to merge alone and first.
 
 ## Blocked — and why it is not a workaround
 
