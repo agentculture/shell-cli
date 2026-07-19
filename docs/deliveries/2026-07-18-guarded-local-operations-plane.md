@@ -146,9 +146,32 @@ no CLI command can produce it today. Not false — the docs phrase it as policy,
 not a per-command guarantee — but a newcomer verifying the exit-code contract
 can exercise 0 and 1 and never 2.
 
-## Third mind — colleague
+## Third mind — colleague, and a correction to `d1`
 
-Reported under *Drift From Plan* (`d1`). It contributed nothing to this run.
+The third drive **succeeded**, after the two that failed. Same backend, same
+repository, comparable read-only review task. It verified all four questions put
+to it with accurate `file:line` references, and raised three observations — two
+of which independently corroborate findings from the adversarial pass (that
+`_import_bindings` is scope-blind because it uses `ast.walk`, and that the
+unbound-attribute fall-through over-reports), reached by a different route.
+
+The third is a fair critique of a test written during this run: the new honesty
+guard selected table rows by matching the strings `"Host"` or `"Container"`, so
+renaming a runner would have made it silently match nothing and assert nothing.
+It has been rewritten to select rows structurally from the pipe-table separator,
+and verified to fail against a table whose runner column reads `Firecracker`.
+
+**This corrects `d1`.** The deviation recorded colleague as unusable on the
+evidence of two consecutive zero-step drives, and that evidence was real. But
+the failure is **intermittent, not deterministic**, and dropping it from the
+reviewer role was a decision made on an incomplete sample of two. Graded 4/5.
+
+The operational conclusion changes accordingly: colleague is not reliable enough
+to *depend* on for a task in a critical path, because roughly a third of drives
+returned usable work here. It is worth asking anyway when the ask is read-only
+and a failure costs only the wait — which is precisely what the `ask-colleague`
+skill already says about the read-only verbs, and what this run initially
+concluded too harshly against.
 
 ## Mid-work Decisions
 

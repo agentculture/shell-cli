@@ -221,9 +221,19 @@ def _resolve_call(func: ast.AST, module_aliases: dict[str, str], direct: dict[st
         if not dotted:
             return ""
         base, _, rest = dotted.partition(".")
-        # An unbound base falls through as itself: `subprocess.run` in a module
-        # that never imported subprocess still reads as a spawn. Fail closed —
-        # this is a gate.
+        # A BOUND base resolves through the alias map, so `import mything as os`
+        # followed by `os.system(...)` correctly reads as `mything.system` and is
+        # not counted. An UNBOUND base falls through as itself, so a literal
+        # `subprocess.run` in a module that never imported subprocess still
+        # reads as a spawn.
+        #
+        # That fall-through biases toward over-reporting, and the cost is real:
+        # a *parameter* named `os` calling `os.system()` on some object is
+        # reported as a spawn although it creates no process (issue #7). The two
+        # behaviours are not in tension — one is the bound case and the other
+        # the unbound case — but do not read this as a general "fail closed"
+        # guarantee. The scanner is a drift detector; over-reporting here is a
+        # known false-positive source, not a safety property.
         return f"{module_aliases.get(base, base)}.{rest}"
 
     return ""

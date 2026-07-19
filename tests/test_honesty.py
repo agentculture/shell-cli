@@ -228,17 +228,29 @@ def test_environment_table_is_framed_as_a_design_target() -> None:
     )
 
 
+def _environment_table_rows() -> list[list[str]]:
+    """Every data row of the environment table, as stripped cells.
+
+    Selected structurally — the pipe-table's header separator marks where data
+    starts — rather than by matching on cell *content*. An earlier version
+    filtered rows containing "Host" or "Container", which silently matched
+    nothing (and so asserted nothing) the moment a runner was renamed. A guard
+    that quietly stops guarding is worse than no guard, so the shape of the
+    table decides what counts as a row, not the words in it.
+    """
+    lines = [ln.strip() for ln in _environment_table_section().splitlines()]
+    table = [ln for ln in lines if ln.startswith("|")]
+    separators = [i for i, ln in enumerate(table) if set(ln) <= set("|-: ")]
+    assert separators, "environment table lost its header separator"
+    return [[c.strip() for c in ln.strip("|").split("|")] for ln in table[separators[0] + 1 :]]
+
+
 def test_every_environment_row_declares_whether_it_is_built() -> None:
     """A runner row may describe intent, but never silently imply it exists."""
-    rows = [
-        line
-        for line in _environment_table_section().splitlines()
-        if line.startswith("|") and ("Host" in line or "Container" in line) and "---" not in line
-    ]
-    assert rows, "expected runner rows in the environment table"
-    for row in rows:
-        cells = [c.strip() for c in row.strip().strip("|").split("|")]
+    rows = _environment_table_rows()
+    assert rows, "expected data rows in the environment table"
+    for cells in rows:
         assert cells[-1] in {
             "No",
             "Yes",
-        }, f"environment row must end in a Built? cell of No/Yes, got {cells[-1]!r}: {row}"
+        }, f"environment row must end in a Built? cell of No/Yes, got {cells[-1]!r}: {cells}"

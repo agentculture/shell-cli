@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.7] - 2026-07-19
+
+### Changed
+
+- Honesty guard: the environment-table row selector is now structural (rows after the pipe-table header separator) instead of matching the strings Host or Container. The old filter would have silently matched nothing — and so asserted nothing — the moment a runner was renamed. Verified to fail against a table whose runner column reads Firecracker.
+- colleague_inventory: corrected a misleading fail closed comment on the unbound-attribute fall-through. The bound and unbound cases are not in tension, but the fall-through is a known false-positive source (issue #7), not a safety property.
+
 ## [0.8.6] - 2026-07-19
 
 ### Changed

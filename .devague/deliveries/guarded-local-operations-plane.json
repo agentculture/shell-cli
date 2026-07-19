@@ -2,7 +2,7 @@
   "plan_slug": "guarded-local-operations-plane",
   "schema_version": 1,
   "created": "2026-07-19T01:13:43Z",
-  "updated": "2026-07-19T01:13:55Z",
+  "updated": "2026-07-19T01:56:11Z",
   "deviations": [
     {
       "id": "d1",
@@ -39,6 +39,20 @@
       "affects": [
         "t72",
         "t73"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d4",
+      "what": "colleague's zero-step failure is INTERMITTENT, not deterministic: a third read-only drive succeeded and produced usable review findings, so d1's conclusion is corrected from unusable to unreliable-but-worth-asking when read-only",
+      "task_ref": "t73",
+      "reason": "d1 recorded colleague as unusable on the evidence of two consecutive drives completing zero steps (923ceb0bd061, b507f26c5c80). A third drive (8c6f080d4d56) on a comparable read-only review task completed normally, answered four verification questions with accurate file:line references, and raised three observations \u2014 two independently corroborating an adversarial pass, one a fair critique of a test written during this run (fragile row filter, since rewritten to select structurally). Roughly one in three drives returned usable work. The corrected conclusion: not reliable enough to place in a critical path, but worth asking when the request is read-only and a failure costs only the wait. Graded 4/5.",
+      "affects": [
+        "t81",
+        "t82",
+        "t83"
       ],
       "origin": "llm",
       "status": "proposed",
