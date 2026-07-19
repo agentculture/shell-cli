@@ -622,10 +622,25 @@ def test_evidence_records_that_the_host_enforces_no_network_policy(
 
 @pytest.mark.parametrize("module_name", ["shell.fs", "shell.process"])
 def test_handler_packages_predeclare_no_exports(module_name: str) -> None:
-    """r8: no fake or stub exports before the modules behind them exist."""
+    """r8: no fake or stub exports before the modules behind them exist.
+
+    Real handler submodules (``shell.fs.read``, ``shell.fs.list``, ...) DO land
+    over time, and importing one anywhere in the process makes Python bind it
+    as an attribute of its parent package automatically -- that is ordinary
+    import machinery, not a functional export the package marker declared. So
+    this filters out submodules (``types.ModuleType`` instances) before
+    checking for the thing r8 actually warns against: a function, class, or
+    other value assigned directly in ``__init__.py`` that looks like a
+    capability before any real module backs it.
+    """
     import importlib
+    import types
 
     module = importlib.import_module(module_name)
     assert module.__all__ == ()
-    public = [name for name in vars(module) if not name.startswith("_")]
+    public = [
+        name
+        for name, value in vars(module).items()
+        if not name.startswith("_") and not isinstance(value, types.ModuleType)
+    ]
     assert public == [], f"{module_name} predeclares exports: {public}"
