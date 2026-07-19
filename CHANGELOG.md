@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.4] - 2026-07-19
+
+### Added
+
+- Two honesty tests guarding the framing of the environment matrix, not just the word sandbox — the previous guard could not catch a table cell reading Execution isolation.
+
+### Fixed
+
+- colleague_inventory: alias imports no longer evade the scanner. import subprocess as sp; sp.run(...) and from subprocess import run; run(...) were both invisible to the literal dotted-name match, so a new unmediated spawn path could have landed without failing the gate. Import bindings are now resolved before matching. Also removes the mirror-image false positive, where import mything as os; os.system(...) was wrongly counted.
+- colleague_inventory: a scan failure is no longer fail-open. An unparseable or unreadable file was silently treated as containing no spawns, so --check could pass while part of the checkout went unscanned. Skipped files are now recorded, published in the JSON and text output, and force exit 2 — an untrustworthy scan has no verdict to give.
+- colleague_inventory: allowlist matching is platform-independent. Module keys are normalised with as_posix(), so resident/steward.py matches on Windows instead of reporting a false unclassified path.
+- README: the environment matrix no longer implies isolation that does not exist. Every row is marked as a design target with an explicit Built? column, all No today.
+
 ## [0.8.3] - 2026-07-19
 
 ### Added
