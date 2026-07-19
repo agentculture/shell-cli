@@ -223,13 +223,18 @@ def test_policy_check_unknown_kind_needs_no_registered_handler(
 ) -> None:
     """The gate's jurisdiction is a property of the kind string, not the registry.
 
-    ``process.shell`` is not a registered operation kind in this worktree yet
-    (its handler is a parallel, not-yet-merged slice) -- and ``policy check``
-    must still answer, because ``_policy_gate`` never looks the kind up in the
-    handler registry.
+    ``policy check`` must answer for a kind that has no registered handler at
+    all, because ``_policy_gate`` never looks the kind up in the registry.
+
+    The kind below is deliberately one that no slice will ever register. An
+    earlier version of this test used ``process.shell``, which was unregistered
+    only because that handler had not merged yet -- so the assertion encoded a
+    temporary fact about one worktree and broke the moment t84 landed. Pin the
+    property, not the state of the registry on the day the test was written.
     """
-    assert "process.shell" not in operations.registered_kinds()
-    rc = main(["policy", "check", "process.shell", "--command", "ls", "--json"])
+    unregistered = "process.no-such-handler-will-ever-exist"
+    assert unregistered not in operations.registered_kinds()
+    rc = main(["policy", "check", unregistered, "--command", "ls", "--json"])
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["verdict"]["decision"] == "ungated"

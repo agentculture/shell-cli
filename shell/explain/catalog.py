@@ -107,8 +107,15 @@ implied by anything here.
 
 ## Status
 
-Not yet extracted from `colleague` — this documents the contract the extraction
-must uphold, not shipped behaviour. See `docs/threat-model.md`.
+All four layers above are **extracted and shipped** in the library: path
+confinement and read-only subtrees (`shell.fs`, via `check_write`), truncation
+(bounded output on every result), and the approval policy (`shell.policy`,
+evaluated inside `shell.operations.execute`).
+
+What is **not** shipped: any execution isolation. `HostRunner` runs commands in
+their own process group so they can be cleaned up — that is a cleanup mechanism,
+never containment, and a descendant calling `setsid` escapes it. The container
+runner does not exist. See `docs/threat-model.md`.
 """
 
 _WHOAMI = """\
