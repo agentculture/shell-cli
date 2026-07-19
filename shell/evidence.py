@@ -29,6 +29,14 @@ run — the caller learns that the action happened *and* that the trail is missi
 taken after redaction and after truncation. A digest of the original stream would
 be an offline brute-force oracle for any short secret the record just removed, so
 the record attests to its own contents and states that scope plainly.
+
+**"Was it applied?" is answered by the dispatcher, not inferred from the status.**
+Only the pipeline knows whether it reached the handler, and a status string does
+not carry that: ``failed`` covers both an operation rejected before the handler
+was entered and a handler that crashed halfway through a write. The first was
+definitively not applied; the second is genuinely unknown. So the caller states
+what happened via :class:`HandlerDisposition`, and ``applied`` is allowed to be
+``None`` rather than forced into a boolean it cannot honestly fill.
 """
 
 from __future__ import annotations
@@ -41,6 +49,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from dataclasses import replace as _replace
+from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping
 
@@ -56,6 +65,7 @@ __all__ = [
     "REDACTION_IS_COMPLETE",
     "EvidenceRecord",
     "EvidenceStore",
+    "HandlerDisposition",
     "Redactor",
     "RetentionPolicy",
     "WriteOutcome",
@@ -76,6 +86,71 @@ REDACTION_IS_COMPLETE = False
 #: :meth:`EvidenceStore.for_environment` for why it is anchored to the *source*
 #: root and what that does not guarantee.
 DEFAULT_STORE_SUBDIR = Path(".shell") / "evidence"
+
+
+class HandlerDisposition(str, Enum):
+    """How far dispatch got before the operation reached its terminal state.
+
+    This exists because the result status cannot answer it. ``failed`` covers an
+    operation rejected before the handler was entered *and* a handler that raised
+    partway through its work, and those two have opposite answers to the only
+    question an auditor really asks — did anything happen?
+
+    The dispatcher knows which one occurred; nobody downstream can recover it.
+    So it is stated rather than inferred.
+    """
+
+    #: Dispatch never called the handler. An unknown kind, a rejected rewrite, a
+    #: policy denial, a preview. Nothing was applied, definitively.
+    NOT_REACHED = "not_reached"
+
+    #: The handler was called and returned. Whether it applied anything is then
+    #: exactly what the caller asked for.
+    COMPLETED = "completed"
+
+    #: The handler was called and raised. It may have completed part of its work
+    #: — a partial write may be on disk — and nothing at this layer can tell.
+    #: ``applied`` is ``None`` here, and that is the honest answer.
+    CRASHED = "crashed"
+
+    #: The caller did not say. Only for records built outside the dispatch
+    #: pipeline; ``applied`` degrades to ``None`` for any non-success status
+    #: rather than guessing in the dangerous direction.
+    UNSTATED = "unstated"
+
+
+def _applied_state(
+    result: OperationResult,
+    requested: Operation,
+    disposition: HandlerDisposition,
+) -> tuple[bool | None, bool | None]:
+    """Return ``(applied, handler_entered)`` for the record.
+
+    ``applied`` is deliberately three-valued. Forcing it to a boolean is what
+    made a denied operation read as an applied one, and the same forcing in the
+    other direction would make a crashed handler claim it changed nothing — a
+    false statement about a process that may have written half a file.
+    """
+    # A preview or a denial never reaches the handler, whatever the caller asked
+    # for and whatever the dispatcher says. Checked first so the two independent
+    # facts cannot disagree.
+    if result.previewed or result.denied:
+        return False, False
+
+    if disposition is HandlerDisposition.NOT_REACHED:
+        return False, False
+
+    if disposition is HandlerDisposition.CRASHED:
+        return None, True
+
+    if disposition is HandlerDisposition.COMPLETED:
+        return bool(requested.apply), True
+
+    # UNSTATED: the record was built outside dispatch. A success can only have
+    # come from a handler that ran; anything else is unknowable from here.
+    if result.succeeded:
+        return bool(requested.apply), None
+    return None, None
 
 
 # --- redaction --------------------------------------------------------------
@@ -310,6 +385,7 @@ def build_record(
     environment: Environment | None = None,
     redactor: Redactor | None = None,
     recorded_at: float | None = None,
+    disposition: HandlerDisposition = HandlerDisposition.UNSTATED,
 ) -> EvidenceRecord:
     """Assemble the evidence record for one completed operation.
 
@@ -323,9 +399,16 @@ def build_record(
     exactly the case for an operation that failed on an unknown kind. That is
     recorded as ``operation.normalized_available = false`` rather than by
     silently copying the requested form into both slots.
+
+    ``disposition`` is how far dispatch got. It defaults to
+    :attr:`HandlerDisposition.UNSTATED` for callers building a record outside the
+    pipeline, which costs them a three-valued ``applied`` on any non-success
+    status — the safe degradation, since the alternative is asserting something
+    this function has no way to know.
     """
     redactor = redactor or Redactor()
     evidence = result.evidence
+    applied, handler_entered = _applied_state(result, requested, disposition)
 
     resources: dict[str, Any] = {
         "timeout_seconds": requested.timeout_seconds,
@@ -353,10 +436,23 @@ def build_record(
             "normalized_available": normalized is not None,
         },
         "execution": {
-            # Preview and applied are recorded as two independent facts. A
-            # preview is not a flavour of success, and a reader must not have to
-            # derive "did this happen?" from the status string alone.
-            "applied": bool(requested.apply) and not result.previewed,
+            # Preview and applied are recorded as independent facts. A preview is
+            # not a flavour of success, and a reader must not have to derive "did
+            # this happen?" from the status string alone.
+            #
+            # ``applied`` is THREE-valued: true, false, or null for "the handler
+            # was entered and crashed, so nobody can say". Deriving it from
+            # ``requested.apply`` alone reported every denied operation — and
+            # every operation rejected before the handler — as applied, which is
+            # the opposite of what happened. Collapsing the crash case to false
+            # would be the same error mirrored: a handler that died mid-write did
+            # not necessarily change nothing.
+            "applied": applied,
+            # The underlying fact ``applied`` is derived from, recorded on its
+            # own so an auditor never has to reverse-engineer it. Null only when
+            # the record was built outside the dispatch pipeline.
+            "handler_entered": handler_entered,
+            "handler_disposition": disposition.value,
             "previewed": result.previewed,
             "requested_apply": bool(requested.apply),
             "exit_code": evidence.exit_code,
@@ -597,6 +693,7 @@ def capture(
     environment: Environment | None = None,
     store: EvidenceStore | None = None,
     secrets: Mapping[str, str] | None = None,
+    disposition: HandlerDisposition = HandlerDisposition.UNSTATED,
 ) -> tuple[OperationResult, EvidenceRecord]:
     """Build, redact and persist the record for *result*; report honestly on failure.
 
@@ -621,6 +718,7 @@ def capture(
         normalized=normalized,
         environment=environment,
         redactor=redactor,
+        disposition=disposition,
     )
 
     outside_work_root: bool | None = None

@@ -489,7 +489,15 @@ def test_registering_a_kind_twice_is_an_error(registry) -> None:
 # --- the policy seam --------------------------------------------------------
 
 
-def test_no_policy_evaluator_yet_reports_ungated(registry, env: Environment) -> None:
+def test_an_operation_with_no_policy_configured_reports_ungated(registry, env: Environment) -> None:
+    """``UNGATED`` is deliberately not ``ALLOWED``.
+
+    Renamed from ``test_no_policy_evaluator_yet_reports_ungated``: the evaluator
+    now exists and is wired into dispatch, so the old name asserted something
+    that had stopped being true. What it actually pins — no policy configured
+    means no gate, distinct from a gate that permitted the operation — is
+    unchanged. The gate's own behaviour lives in ``test_dispatch_policy.py``.
+    """
     registry("test.ungated", intent=OperationIntent.OBSERVE, run=_ok)
 
     result = operations.execute(Operation(kind="test.ungated"), env)
