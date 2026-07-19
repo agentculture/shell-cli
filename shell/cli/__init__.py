@@ -66,7 +66,9 @@ def _build_parser() -> argparse.ArgumentParser:
     from shell.cli._commands import doctor as _doctor_cmd
     from shell.cli._commands import explain as _explain_cmd
     from shell.cli._commands import learn as _learn_cmd
+    from shell.cli._commands import operation as _operation_group
     from shell.cli._commands import overview as _overview_cmd
+    from shell.cli._commands import policy as _policy_group
     from shell.cli._commands import whoami as _whoami_cmd
 
     parser = _CliArgumentParser(
@@ -92,6 +94,8 @@ def _build_parser() -> argparse.ArgumentParser:
     _overview_cmd.register(sub)
     _doctor_cmd.register(sub)
     _cli_group.register(sub)
+    _policy_group.register(sub)
+    _operation_group.register(sub)
     # Register your own noun groups here:
     #   from shell.cli._commands import my_noun as _my_noun_group
     #   _my_noun_group.register(sub)
