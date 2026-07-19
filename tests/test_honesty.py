@@ -254,3 +254,70 @@ def test_every_environment_row_declares_whether_it_is_built() -> None:
             "No",
             "Yes",
         }, f"environment row must end in a Built? cell of No/Yes, got {cells[-1]!r}: {cells}"
+
+
+# --- 5. the library surface, not just the docs -----------------------------
+#
+# The doc checks above cover what a *human* reads. A consumer of the library
+# reads docstrings and result payloads, and those are where an overclaim would
+# do the most damage — a runner docstring asserting isolation is read as the
+# contract by the very code that depends on it. So the source of the package is
+# scanned with the same guard, and the runner's posture is required to survive
+# all the way onto a result, not merely to exist in a docstring.
+
+
+def _package_sources() -> list[Path]:
+    return sorted((_REPO_ROOT / "shell").rglob("*.py"))
+
+
+def test_package_source_makes_no_isolation_claim() -> None:
+    """No docstring, comment or string literal in shell/ claims isolation."""
+    offenders: dict[str, list[str]] = {}
+    for path in _package_sources():
+        hits = overclaims(path.read_text(encoding="utf-8"))
+        if hits:
+            offenders[str(path.relative_to(_REPO_ROOT))] = hits
+    assert not offenders, f"shell/ source overclaims isolation: {offenders}"
+
+
+def test_the_host_runner_states_the_posture_in_its_own_description() -> None:
+    from shell.runners.host import HostRunner
+
+    described = HostRunner().describe()
+    assert described["isolation"] == "none"
+    assert "not a sandbox" in described["isolation_note"].lower()
+    assert overclaims(described["isolation_note"]) == []
+
+
+def test_the_posture_reaches_result_metadata(tmp_path: Path) -> None:
+    """Documentation *and result metadata* must say so plainly — so check both.
+
+    A consumer that never reads the README still receives the posture, because
+    every result the pipeline returns carries the runner's own self-description.
+    """
+    from shell import operations
+    from shell.environment import Environment
+    from shell.operations import ExecutionProfile, Operation, OperationIntent
+    from shell.results import OperationResult, OperationStatus
+    from shell.runners.host import HostRunner
+
+    def _run(operation: Operation, environment: Environment) -> OperationResult:
+        return OperationResult(operation_id=operation.id, status=OperationStatus.SUCCEEDED)
+
+    kind = "test.honesty-posture"
+    operations.register(
+        kind,
+        intent=OperationIntent.OBSERVE,
+        default_profile=ExecutionProfile.OBSERVE,
+        run=_run,
+    )
+    try:
+        environment = Environment(source_root=tmp_path, work_root=tmp_path, runner=HostRunner())
+        result = operations.execute(Operation(kind=kind), environment)
+    finally:
+        operations.unregister(kind)
+
+    payload = result.to_dict()["evidence"]
+    assert payload["isolation"] == "none"
+    assert "not a sandbox" in payload["isolation_note"].lower()
+    assert overclaims(payload["isolation_note"]) == []
