@@ -63,6 +63,8 @@ import shell.fs.media  # noqa: E402,F401  isort:skip
 import shell.fs.read  # noqa: E402,F401  isort:skip
 import shell.fs.write  # noqa: E402,F401  isort:skip
 
+_JSON_HELP = "Emit structured JSON."
+
 _NOUN_SECTIONS = [
     {
         "title": "Verbs",
@@ -256,7 +258,7 @@ def register(sub: argparse._SubParsersAction) -> None:
         "policy",
         help="Evaluate and explain the operation-policy gate (see 'shell policy overview').",
     )
-    p.add_argument("--json", action="store_true", help="Emit structured JSON.")
+    p.add_argument("--json", action="store_true", help=_JSON_HELP)
     p.set_defaults(func=_no_verb, json=False)
     # `p` is a _CliArgumentParser (the top-level subparsers were built with that
     # parser_class); propagate it so every verb under `policy` routes parse
@@ -265,7 +267,7 @@ def register(sub: argparse._SubParsersAction) -> None:
     noun_sub = p.add_subparsers(dest="policy_command", parser_class=type(p))
 
     ov = noun_sub.add_parser("overview", help="Describe the policy noun.")
-    ov.add_argument("--json", action="store_true", help="Emit structured JSON.")
+    ov.add_argument("--json", action="store_true", help=_JSON_HELP)
     ov.set_defaults(func=cmd_policy_overview)
 
     check = noun_sub.add_parser(
@@ -295,7 +297,7 @@ def register(sub: argparse._SubParsersAction) -> None:
         help="One argv token (repeatable, in order): --argv git --argv status.",
     )
     _add_policy_source_args(check)
-    check.add_argument("--json", action="store_true", help="Emit structured JSON.")
+    check.add_argument("--json", action="store_true", help=_JSON_HELP)
     check.set_defaults(func=cmd_policy_check)
 
     explain = noun_sub.add_parser(
@@ -303,5 +305,5 @@ def register(sub: argparse._SubParsersAction) -> None:
         help="List gated kind prefixes and every known operation kind's policy status.",
     )
     _add_policy_source_args(explain)
-    explain.add_argument("--json", action="store_true", help="Emit structured JSON.")
+    explain.add_argument("--json", action="store_true", help=_JSON_HELP)
     explain.set_defaults(func=cmd_policy_explain)

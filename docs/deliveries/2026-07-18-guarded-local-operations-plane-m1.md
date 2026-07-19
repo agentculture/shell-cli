@@ -27,13 +27,13 @@ primitives — after the M0 opening slice had landed. It did not reach Milestone
 
 ## Planned Work
 
-Quoted verbatim from the `devague summary` skeleton, `owns:` clauses elided:
+Adapted from the `devague summary` skeleton, `owns:` clauses elided:
 
 - `t69` — [colleague / security-lane / PUBLISHES a fixed colleague release] Private security PR: resolve policy+hooks from the operator source root and carry that identity through nested worktrees and children — RESOLUTION ONLY, per-model overlay semantics unchanged.
 - `t70` — [colleague / security-lane / separate review / publishes a colleague release] Harden child policy as a restriction of the parent: child_effective = parent_cap INTERSECT source_root_child_model_policy, deny winning and allowlists intersecting.
 - `t71` — [shell-cli / M0 / PR1 — FIRST MERGED shell-cli PR / publishes scaffold-only release] Release and publishing hardening BEFORE any later merge publishes.
 - `t72` — [shell-cli / M0 / PR2 / publishes scaffold-only release] Post the six-part Milestone 0/1 plan on issue #1, align every guidance surface with the operations-plane issue, and document the WebGlass peer-seam boundary.
-- `t73` — [shell-cli / M0 / PR3 / publishes scaffold-only release] Commit the inventory scanner with its pinned SHA and wire --check into CI as a known-debt gate that publishes debt_remaining.
+- `t73` — [shell-cli / M0 / PR3 / publishes scaffold-only release] Commit the inventory scanner with its pinned SHA and wire --check into CI as a known-debt drift detector that publishes debt_remaining.
 - `t74` — [shell-cli / M0 / PR4 / publishes scaffold-only release] Capture the FIXED colleague baseline: generate schemas and fixtures, build the provider-neutral harness interface, and prove fixture regeneration.
 - `t75` — [shell-cli / M0 / PR5 / publishes scaffold-only release] Install the source-hash drift gate BEFORE extraction begins.
 - `t76` — [shell-cli / M1 / PR6 / publishes] FOUNDATION: Operation, OperationResult, Environment with schema_version, the lifecycle pipeline, HostRunner skeleton — WITH the zero-dep guard, honesty gate and WebGlass negative-import check.

@@ -69,7 +69,7 @@ from __future__ import annotations
 import os
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 
 from shell.environment import Environment
 from shell.operations import ExecutionProfile, Operation, OperationIntent, register
@@ -95,6 +95,11 @@ EXEC_CONFINEMENT_NOTE = (
 )
 
 _EXEC_PROFILES = (ExecutionProfile.PROJECT, ExecutionProfile.CONTROL)
+
+
+# dataclasses.replace preserves the concrete Evidence type at runtime.
+def _replace_evidence(evidence: Evidence, /, **changes: Any) -> Evidence:
+    return cast(Evidence, replace(evidence, **changes))
 
 
 def truncate(text: str, limit: int) -> str:
@@ -261,7 +266,7 @@ def _evidence(kind: str, outcome: ProcessOutcome) -> Evidence:
     )
     if outcome.output_complete:
         return evidence
-    return replace(
+    return _replace_evidence(
         evidence,
         degraded=True,
         degraded_reason=(

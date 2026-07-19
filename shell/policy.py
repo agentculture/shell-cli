@@ -336,7 +336,7 @@ def _read_source(candidate: PolicyCandidate) -> PolicySource:
 
     try:
         raw = json.loads(text)
-    except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
+    except ValueError as exc:
         return PolicySource(
             status=SourceStatus.MALFORMED,
             path=path,

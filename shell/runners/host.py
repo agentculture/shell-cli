@@ -210,7 +210,7 @@ def _send(process: subprocess.Popen[bytes], sig: int, group: bool) -> bool:
             os.killpg(_signal_target(process, True), sig)
         else:
             process.send_signal(sig)
-    except (ProcessLookupError, OSError):
+    except OSError:
         return False
     return True
 
@@ -435,7 +435,7 @@ class HostRunner:
             if stdin:
                 process.stdin.write(stdin.encode("utf-8"))
             process.stdin.close()
-        except (BrokenPipeError, OSError):
+        except OSError:
             # The command exited or closed its input before reading it. That is
             # the command's business, not an error in running it.
             pass

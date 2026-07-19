@@ -65,7 +65,7 @@ import uuid
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from types import MappingProxyType
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, cast
 
 from shell.environment import Environment
 from shell.evidence import (
@@ -350,6 +350,20 @@ class HandlerSpec:
     run: Handler
 
 
+# dataclasses.replace constructs the same concrete dataclass type it receives;
+# these wrappers state that guarantee for analyzers that model it generically.
+def _replace_operation(operation: Operation, /, **changes: Any) -> Operation:
+    return cast(Operation, replace(operation, **changes))
+
+
+def _replace_result(result: OperationResult, /, **changes: Any) -> OperationResult:
+    return cast(OperationResult, replace(result, **changes))
+
+
+def _replace_evidence(evidence: Evidence, /, **changes: Any) -> Evidence:
+    return cast(Evidence, replace(evidence, **changes))
+
+
 _HANDLERS: dict[str, HandlerSpec] = {}
 
 
@@ -405,7 +419,7 @@ def normalize(operation: Operation) -> Operation:
             f"but the caller supplied {operation.intent.value!r}"
         )
 
-    return replace(
+    return _replace_operation(
         operation,
         intent=spec.intent,
         profile=operation.profile if operation.profile is not None else spec.default_profile,
@@ -460,7 +474,7 @@ def apply_rewrite(
         return operation
 
     if not isinstance(candidate, Operation):
-        return replace(operation, arguments=dict(candidate))
+        return _replace_operation(operation, arguments=dict(candidate))
 
     if candidate.kind != operation.kind:
         raise RewriteRejected(
@@ -472,7 +486,7 @@ def apply_rewrite(
     # Everything but ``arguments`` must survive the rewrite untouched. Comparing
     # two argument-blanked copies covers every field at once, so a field added to
     # ``Operation`` later is protected without anyone remembering to list it.
-    if replace(candidate, arguments={}) != replace(operation, arguments={}):
+    if _replace_operation(candidate, arguments={}) != _replace_operation(operation, arguments={}):
         raise RewriteRejected(
             f"a rewrite of {operation.kind!r} may change arguments only; identity, "
             "intent, profile, apply-state and resource limits are not rewritable"
@@ -587,7 +601,7 @@ def _stamp(
     """
     base = _environment_evidence(environment)
     handler_evidence = result.evidence
-    merged = replace(
+    merged = _replace_evidence(
         handler_evidence,
         backend=base.backend,
         isolation=base.isolation,
@@ -603,7 +617,7 @@ def _stamp(
         ended_at=ended_at,
         duration_ms=(ended_at - started_at) * 1000.0,
     )
-    return replace(result, evidence=merged)
+    return _replace_result(result, evidence=merged)
 
 
 def _record_evidence(
@@ -641,7 +655,7 @@ def _record_evidence(
         )
     except Exception as exc:  # noqa: BLE001 - evidence failure must not eat a result
         reason = f"evidence record could not be built: {type(exc).__name__}: {exc}"
-        return replace(result, evidence=_degraded(result.evidence, reason))
+        return _replace_result(result, evidence=_degraded(result.evidence, reason))
 
     if sink is None:
         return recorded
@@ -650,7 +664,7 @@ def _record_evidence(
         sink(record)
     except Exception as exc:  # noqa: BLE001 - a consumer's sink is not trusted to behave
         reason = f"evidence sink raised: {type(exc).__name__}: {exc}"
-        return replace(recorded, evidence=_degraded(recorded.evidence, reason))
+        return _replace_result(recorded, evidence=_degraded(recorded.evidence, reason))
 
     return recorded
 
@@ -680,15 +694,17 @@ def _scrub_for_caller(
     exact value this function exists to remove.
     """
     if not secrets:
-        return replace(
+        return _replace_result(
             result,
-            evidence=replace(result.evidence, secret_handling=SecretHandling.NONE_DECLARED),
+            evidence=_replace_evidence(
+                result.evidence, secret_handling=SecretHandling.NONE_DECLARED
+            ),
         )
 
     if reveal:
-        return replace(
+        return _replace_result(
             result,
-            evidence=replace(result.evidence, secret_handling=SecretHandling.REVEALED),
+            evidence=_replace_evidence(result.evidence, secret_handling=SecretHandling.REVEALED),
         )
 
     try:
@@ -699,19 +715,19 @@ def _scrub_for_caller(
             f"({type(exc).__name__}), so its output fields were dropped rather "
             "than returned unredacted"
         )
-        return replace(
+        return _replace_result(
             result,
             output={},
             rendering="",
-            evidence=replace(
+            evidence=_replace_evidence(
                 _degraded(Evidence(), reason),
                 secret_handling=SecretHandling.REDACTED,
             ),
         )
 
-    return replace(
+    return _replace_result(
         scrubbed,
-        evidence=replace(
+        evidence=_replace_evidence(
             scrubbed.evidence,
             secret_handling=SecretHandling.REDACTED,
             secret_replacements=count,
@@ -722,7 +738,7 @@ def _scrub_for_caller(
 def _degraded(evidence: Evidence, reason: str) -> Evidence:
     """Mark *evidence* degraded, keeping any reason already recorded."""
     combined = f"{evidence.degraded_reason}; {reason}" if evidence.degraded_reason else reason
-    return replace(evidence, degraded=True, degraded_reason=combined)
+    return _replace_evidence(evidence, degraded=True, degraded_reason=combined)
 
 
 def execute(
@@ -909,4 +925,5 @@ def execute(
             HandlerDisposition.CRASHED,
         )
 
-    return _finish(replace(result, verdict=verdict), effective, HandlerDisposition.COMPLETED)
+    completed = _replace_result(result, verdict=verdict)
+    return _finish(completed, effective, HandlerDisposition.COMPLETED)

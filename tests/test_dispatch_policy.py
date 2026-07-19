@@ -655,9 +655,10 @@ def test_the_operation_form_is_accepted_when_only_arguments_differ(
 
 def test_apply_rewrite_rejects_a_kind_change_loudly() -> None:
     original = Operation(kind="process.shell", arguments={})
+    relabeled = Operation(kind="fs.example", arguments={}, id=original.id)
 
     with pytest.raises(RewriteRejected, match="may not change the operation kind"):
-        apply_rewrite(original, Operation(kind="fs.example", arguments={}, id=original.id))
+        apply_rewrite(original, relabeled)
 
 
 # --- an untrustworthy policy fails closed, within its jurisdiction -----------

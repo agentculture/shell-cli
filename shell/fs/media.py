@@ -75,16 +75,22 @@ def validate_attachment(path: str) -> dict[str, str]:
     return {"path": str(p), "media_type": _MEDIA_TYPES[ext]}
 
 
-def build_part(attachment: dict[str, str]) -> dict[str, Any]:
+def build_part(attachment: dict[str, str], *, file_bytes: bytes | None = None) -> dict[str, Any]:
     """Build a standard OpenAI content part from a validated attachment.
 
     * ``attachment`` is the dict returned by :func:`validate_attachment`.
+    * ``file_bytes`` may supply bytes already read by a size-bounded caller.
     * Image attachments become ``{"type": "image_url", "image_url": ...}``.
     * Audio attachments become ``{"type": "input_audio", "input_audio": ...}``.
 
+    Omitting ``file_bytes`` preserves the vendored colleague helper's public
+    behavior. :func:`read_media` supplies its bounded read so the handler never
+    reopens the file after enforcing its cap.
+
     Ported from colleague/media.py:66.
     """
-    file_bytes = Path(attachment["path"]).read_bytes()
+    if file_bytes is None:
+        file_bytes = Path(attachment["path"]).read_bytes()
     encoded = base64.b64encode(file_bytes).decode("ascii")
     media_type = attachment["media_type"]
 
@@ -100,6 +106,16 @@ def build_part(attachment: dict[str, str]) -> dict[str, Any]:
         "type": "input_audio",
         "input_audio": {"data": encoded, "format": ext},
     }
+
+
+def _media_size_failure(operation: Operation, *, rel: str, size: int) -> OperationResult:
+    error = f"cannot view {rel}: {size} bytes exceeds the " f"{MAX_MEDIA_BYTES}-byte media size cap"
+    return OperationResult(
+        operation_id=operation.id,
+        status=OperationStatus.FAILED,
+        error=error,
+        rendering=f"error: {error}",
+    )
 
 
 def read_media(operation: Operation, environment: Environment) -> OperationResult:
@@ -139,16 +155,7 @@ def read_media(operation: Operation, environment: Environment) -> OperationResul
 
         size = path.stat().st_size
         if size > MAX_MEDIA_BYTES:
-            error = (
-                f"cannot view {rel}: {size} bytes exceeds the "
-                f"{MAX_MEDIA_BYTES}-byte media size cap"
-            )
-            return OperationResult(
-                operation_id=operation.id,
-                status=OperationStatus.FAILED,
-                error=error,
-                rendering=f"error: {error}",
-            )
+            return _media_size_failure(operation, rel=rel, size=size)
 
         try:
             attachment = validate_attachment(str(path))
@@ -172,7 +179,8 @@ def read_media(operation: Operation, environment: Environment) -> OperationResul
             )
 
         try:
-            part = build_part(attachment)
+            with path.open("rb") as media_file:
+                file_bytes = media_file.read(MAX_MEDIA_BYTES + 1)
         except OSError as exc:
             error = f"cannot read {rel}: {exc}"
             return OperationResult(
@@ -182,6 +190,11 @@ def read_media(operation: Operation, environment: Environment) -> OperationResul
                 rendering=f"error: {error}",
             )
 
+        size = len(file_bytes)
+        if size > MAX_MEDIA_BYTES:
+            return _media_size_failure(operation, rel=rel, size=size)
+
+        part = build_part(attachment, file_bytes=file_bytes)
         result_text = f"loaded image {rel} ({size} bytes) into the conversation"
         return OperationResult(
             operation_id=operation.id,

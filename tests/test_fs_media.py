@@ -81,8 +81,9 @@ class TestMediaValidation:
         """A directory raises ValueError."""
         from shell.fs.media import validate_attachment
 
+        directory = str(tmp_path)
         with pytest.raises(ValueError, match="not a regular file"):
-            validate_attachment(str(tmp_path))
+            validate_attachment(directory)
 
     def test_validate_attachment_unknown_extension(self, tmp_path: Path) -> None:
         """Unknown extension raises ValueError."""
@@ -91,8 +92,9 @@ class TestMediaValidation:
         unknown = tmp_path / "file.xyz"
         unknown.write_bytes(b"data")
 
+        unknown_path = str(unknown)
         with pytest.raises(ValueError, match="Unknown attachment extension 'xyz'"):
-            validate_attachment(str(unknown))
+            validate_attachment(unknown_path)
 
     def test_build_part_png(self, tmp_path: Path) -> None:
         """build_part for PNG yields image_url part."""
@@ -180,6 +182,57 @@ class TestMediaHandler:
             f"{MAX_MEDIA_BYTES}-byte media size cap"
         )
         assert result.error == expected
+
+    def test_media_handler_bounds_a_file_that_grows_after_stat(
+        self, env: Environment, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The content read enforces the cap even when the earlier stat was small."""
+        import shell.fs.media as media
+
+        img_file = env.work_root / "growing.png"
+        img_file.write_bytes(b"PNG")
+        original_validate = media.validate_attachment
+
+        def grow_after_stat(path: str) -> dict[str, str]:
+            attachment = original_validate(path)
+            oversize = media.MAX_MEDIA_BYTES + 128
+            Path(path).write_bytes(b"PNG" + b"x" * (oversize - 3))
+            return attachment
+
+        monkeypatch.setattr(media, "validate_attachment", grow_after_stat)
+
+        op = Operation(kind="fs.media", arguments={"path": "growing.png"})
+        result = media.read_media(op, env)
+
+        assert result.status == OperationStatus.FAILED
+        bounded_size = media.MAX_MEDIA_BYTES + 1
+        assert result.error == (
+            f"cannot view growing.png: {bounded_size} bytes exceeds the "
+            f"{media.MAX_MEDIA_BYTES}-byte media size cap"
+        )
+
+    def test_media_handler_does_not_reopen_bytes_for_encoding(
+        self,
+        env: Environment,
+        png_108_bytes: bytes,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The handler passes its one bounded read into build_part."""
+        from shell.fs.media import read_media
+
+        img_file = env.work_root / "single-read.png"
+        img_file.write_bytes(png_108_bytes)
+
+        def reject_reopen(_path: Path) -> bytes:
+            raise AssertionError("build_part reopened the media file")
+
+        monkeypatch.setattr(Path, "read_bytes", reject_reopen)
+
+        op = Operation(kind="fs.media", arguments={"path": "single-read.png"})
+        result = read_media(op, env)
+
+        assert result.status == OperationStatus.SUCCEEDED
+        assert "loaded image single-read.png (108 bytes)" in result.rendering
 
     def test_media_handler_audio_rejected(self, env: Environment) -> None:
         """An audio file is rejected with the images-only message."""

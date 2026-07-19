@@ -339,7 +339,9 @@ class RetentionPolicy:
     has already read, copied, or forwarded to telemetry is beyond reach; pruning
     is housekeeping, never a deletion guarantee.
 
-    ``None`` on either bound disables that bound.
+    ``None`` on either bound disables that bound. ``max_records=0`` explicitly
+    means keep no records: a write is immediately pruned and reports that it was
+    not persisted.
     """
 
     max_records: int | None = 500
@@ -711,7 +713,17 @@ class EvidenceStore:
                     pass
             return WriteOutcome(ok=False, error=f"{type(exc).__name__}: {exc}")
 
-        self.prune()
+        removed = self.prune()
+        if target in removed:
+            return WriteOutcome(
+                ok=False,
+                error="record was pruned by retention policy",
+            )
+        if not target.is_file():
+            return WriteOutcome(
+                ok=False,
+                error="record is missing after retention was applied",
+            )
         return WriteOutcome(ok=True, path=target)
 
     def paths(self) -> list[Path]:
@@ -740,6 +752,24 @@ class EvidenceStore:
                 continue
         return out
 
+    @staticmethod
+    def _older_than(path: Path, cutoff: float) -> bool:
+        try:
+            return path.stat().st_mtime < cutoff
+        except OSError:
+            return False
+
+    @staticmethod
+    def _remove_paths(paths: list[Path]) -> list[Path]:
+        removed: list[Path] = []
+        for path in paths:
+            try:
+                path.unlink()
+                removed.append(path)
+            except OSError:
+                continue
+        return removed
+
     def prune(self, *, now: float | None = None) -> list[Path]:
         """Apply the retention policy. Returns the paths actually removed.
 
@@ -749,31 +779,19 @@ class EvidenceStore:
         """
         now = time.time() if now is None else now
         paths = self.paths()
-        doomed: list[Path] = []
-
-        if self.retention.max_age_seconds is not None:
-            cutoff = now - self.retention.max_age_seconds
-            for path in paths:
-                try:
-                    if path.stat().st_mtime < cutoff:
-                        doomed.append(path)
-                except OSError:
-                    continue
+        max_age = self.retention.max_age_seconds
+        doomed = (
+            []
+            if max_age is None
+            else [path for path in paths if self._older_than(path, now - max_age)]
+        )
 
         if self.retention.max_records is not None:
             survivors = [p for p in paths if p not in doomed]
             excess = len(survivors) - self.retention.max_records
-            if excess > 0:
-                doomed.extend(survivors[:excess])
+            doomed.extend(survivors[: max(0, excess)])
 
-        removed: list[Path] = []
-        for path in doomed:
-            try:
-                path.unlink()
-                removed.append(path)
-            except OSError:
-                continue
-        return removed
+        return self._remove_paths(doomed)
 
 
 # --- the entry point --------------------------------------------------------

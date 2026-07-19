@@ -52,6 +52,8 @@ from shell.cli._errors import EXIT_ENV_ERROR, EXIT_USER_ERROR, CliError
 from shell.cli._output import emit_result
 from shell.evidence import DEFAULT_STORE_SUBDIR, EvidenceStore
 
+_JSON_HELP = "Emit structured JSON."
+
 _NOUN_SECTIONS = [
     {
         "title": "Verbs",
@@ -231,12 +233,12 @@ def register(sub: argparse._SubParsersAction) -> None:
         "operation",
         help="Inspect persisted operation evidence (see 'shell operation overview').",
     )
-    p.add_argument("--json", action="store_true", help="Emit structured JSON.")
+    p.add_argument("--json", action="store_true", help=_JSON_HELP)
     p.set_defaults(func=_no_verb, json=False)
     noun_sub = p.add_subparsers(dest="operation_command", parser_class=type(p))
 
     ov = noun_sub.add_parser("overview", help="Describe the operation noun.")
-    ov.add_argument("--json", action="store_true", help="Emit structured JSON.")
+    ov.add_argument("--json", action="store_true", help=_JSON_HELP)
     ov.set_defaults(func=cmd_operation_overview)
 
     show = noun_sub.add_parser(
@@ -251,5 +253,5 @@ def register(sub: argparse._SubParsersAction) -> None:
         metavar="DIR",
         help="Evidence store directory to search (default: ./.shell/evidence).",
     )
-    show.add_argument("--json", action="store_true", help="Emit structured JSON.")
+    show.add_argument("--json", action="store_true", help=_JSON_HELP)
     show.set_defaults(func=cmd_operation_show)

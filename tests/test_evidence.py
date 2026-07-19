@@ -741,6 +741,40 @@ def test_retention_prunes_by_age(tmp_path: Path) -> None:
     assert len(remaining) == 1
 
 
+def test_zero_record_retention_reports_write_as_not_persisted(tmp_path: Path) -> None:
+    """Keeping zero records is valid, but the just-written record did not persist."""
+    store = EvidenceStore(
+        directory=tmp_path / "evidence",
+        retention=RetentionPolicy(max_records=0, max_age_seconds=None),
+    )
+    operation = make_operation()
+    record = build_record(make_result(operation), requested=operation)
+
+    outcome = store.write(record)
+
+    assert outcome.ok is False
+    assert outcome.path is None
+    assert outcome.error == "record was pruned by retention policy"
+    assert store.paths() == []
+
+
+def test_zero_record_retention_degrades_capture_honestly(tmp_path: Path) -> None:
+    """capture propagates the immediate retention prune to its public evidence."""
+    store = EvidenceStore(
+        directory=tmp_path / "evidence",
+        retention=RetentionPolicy(max_records=0, max_age_seconds=None),
+    )
+    operation = make_operation()
+
+    result, record = capture(make_result(operation), requested=operation, store=store)
+
+    persistence = record.to_dict()["persistence"]
+    assert persistence["persisted"] is False
+    assert persistence["reason"] == "record was pruned by retention policy"
+    assert result.evidence.degraded is True
+    assert "record was pruned by retention policy" in result.evidence.degraded_reason
+
+
 def test_retention_defaults_are_bounded() -> None:
     """Neither bound is None by default — an unbounded store is a disk-fill bug."""
     policy = RetentionPolicy()
