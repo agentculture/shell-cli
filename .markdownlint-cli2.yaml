@@ -19,5 +19,14 @@ ignores:
   - ".local/**"
   - ".afi/**"
   - ".teken/**"
+  # Generated devague artifacts — spec exports and the plan projection. devague
+  # renders claim/task text verbatim, and that text legitimately contains Python
+  # identifiers (_CLAIM, _read_file, __init__.py) which markdownlint reads as
+  # emphasis (MD037) or strong (MD050). Hand-fixing a generated file is the
+  # wrong repair: the fix is upstream escaping, tracked as
+  # agentculture/devague#87. Excluded rather than reformatted, same rationale
+  # as the vendored skills below.
+  - "docs/specs/**"
+  - "docs/plans/**"
   # Vendored skills are cited verbatim from guildmaster — do not reformat them.
   - ".claude/skills/**"

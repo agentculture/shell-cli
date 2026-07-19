@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] - 2026-07-19
+
+### Added
+
+- docs/specs/ and docs/plans/: the converged guarded-local-operations-plane spec and its buildable plan, plus the external review record under docs/external-review/.
+- scripts/render_plan.py: generates the plan projection from authoritative devague state, with a SHA-256 drift check (--check). Temporary until devague#85 lands deferred-target semantics.
+- CLAUDE.md: an explicit WebGlass peer-seam section — webglass-cli is a peer capability, web semantics never become Operation kinds here, and only provider-neutral artifacts cross.
+
+### Changed
+
+- README.md rewritten to the operations-plane framing: the operation lifecycle, the two-axis environment model, the three profiles, evidence as a product surface, and an explicit non-goals section. Replaces the superseded extract-six-tools-from-colleague framing.
+- AGENTS.colleague.md now states what this repo is and the contracts a resident can break by accident (pure-stdlib core, guard-not-a-sandbox, preview-by-default, version-per-PR, no tracebacks).
+
 ## [0.8.0] - 2026-07-19
 
 ### Added
