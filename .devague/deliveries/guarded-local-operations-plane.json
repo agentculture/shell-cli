@@ -2,7 +2,7 @@
   "plan_slug": "guarded-local-operations-plane",
   "schema_version": 1,
   "created": "2026-07-19T01:13:43Z",
-  "updated": "2026-07-19T01:56:11Z",
+  "updated": "2026-07-19T04:22:22Z",
   "deviations": [
     {
       "id": "d1",
@@ -56,6 +56,64 @@
       ],
       "origin": "llm",
       "status": "proposed",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d5",
+      "what": "t69/t70 filed as PRIVATE GitHub security advisories (GHSA-6pfg-9vcp-hqw4, GHSA-2m42-prxw-43w6), not public issues",
+      "task_ref": "t69",
+      "reason": "colleague is a PUBLIC repo released on PyPI at 1.51.0. A public issue describing a policy-guard bypass with no fix available is a zero-day disclosure. t69's own acceptance criterion requires private-fix-then-disclose. The communicate skill's default channel (post-issue.sh) is wrong for this content.",
+      "affects": [
+        "t70"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d6",
+      "what": "t74 split: t74a (six schemas + behavioural fixtures) proceeds NOW at SHA 28fee29; t74b (policy-composition fixtures) holds for the fixed colleague release",
+      "task_ref": "t74",
+      "reason": "VERIFIED: colleague/tools.py contains zero references to policy (grep finds no match). t69 owns policy.py/loop.py/worktrees.py/subagents.py/work.py; t70 owns policy.py/subagents.py. Neither touches tools.py, so the security lane provably cannot change SCHEMAS[:6] or the six handlers. The 'never encode pre-hardening composition as parity' criterion is scoped to composition fixtures, which are held.",
+      "affects": [
+        "t75",
+        "t76"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d7",
+      "what": "t76 foundation runs PARALLEL to t74a rather than sequentially behind it",
+      "task_ref": "t76",
+      "reason": "t76's dependency on t74 is methodological (capture the parity target before building, so parity is not shaped around the implementation), not a content dependency: the Operation/OperationResult/Environment types are provider-neutral by mandate and consume no fixture. Running in separate worktrees preserves that intent - the t74a agent reads only colleague and never sees t76's work.",
+      "affects": [],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d8",
+      "what": "Version bump + CHANGELOG entry are performed by the MERGING agent at local-merge time, not by each task agent",
+      "task_ref": "t74",
+      "reason": "The per-task INVARIANT says every PR bumps the version. pyproject.toml and CHANGELOG.md are shared by every task in the plan, so N parallel worktree agents each bumping them guarantees a three-way conflict on every merge. The invariant is still satisfied per merge - ownership moves, not the requirement.",
+      "affects": [
+        "t75",
+        "t76"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable"
+    },
+    {
+      "id": "d9",
+      "what": "Fan-out slices land as LOCAL merges to main, not GitHub pull requests",
+      "task_ref": "t74",
+      "reason": "Operator directive: subagent takes a task, works in a worktree, the merging agent merges it locally to main, fan-out continues. GitHub PR overhead is not wanted for intra-fanout slices.",
+      "affects": [],
+      "origin": "user",
+      "status": "approved",
       "classification": "acceptable"
     }
   ]

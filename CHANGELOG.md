@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-07-19
+
+### Added
+
+- `shell.operations` — `Operation`, execution profiles, handler registry, and the normalize -> policy gate -> preview -> handler -> evidence lifecycle pipeline (t76).
+- `shell.results` — neutral `OperationResult` with `previewed`/`denied`/`succeeded`/`failed`/`timed_out` status, policy verdict, effects, and evidence. `previewed` is its own status and is never reported as success (t76).
+- `shell.environment` — `Environment` with the workspace axis (`source_root`/`work_root`) and runner axis kept independent, never collapsed into one overloaded mode (t76).
+- `shell.runners.host.HostRunner` — identity and posture only; execution semantics land in t80. Documented as a guard, not a sandbox (t76).
+- `Environment.network_enforced` and `Evidence.network_enforced` — a declared network policy the host runner cannot enforce is now reported as unenforced rather than implying a control that does not exist (t76).
+- `tests/test_zero_deps.py` — zero-dependency guard shipping in the first implementation slice, with in-process, fresh-subprocess, and AST source-scan detectors (t76).
+- `tests/test_boundaries.py` — asserts the import graph contains no colleague and no webglass module (t76).
+- `scripts/handler_hashes.py` + `tests/test_drift_gate.py` — AST source-segment drift gate over colleague's six tool handlers, pinned at SHA 28fee29, wired into the CI inventory-gate job (t75).
+
+### Changed
+
+- `tests/test_honesty.py` now scans every `shell/**/*.py` surface for overclaims, not just the documentation set (t76).
+
 ## [0.8.7] - 2026-07-19
 
 ### Changed
