@@ -1,6 +1,6 @@
 [project]
 name = "shell-cli"
-version = "0.8.7"
+version = "0.13.1"
 description = "Agent-first CLI and agent owning the file-and-shell tool surface for AI coding agents: read, write, edit, list, view media, and gated shell execution, with path confinement and an operator approval policy. Pure-stdlib core, extracted from colleague so any host imports one safe execution layer."
 readme = "README.md"
 license = "Apache-2.0"
@@ -68,6 +68,23 @@ target-version = ["py312"]
 
 [tool.bandit]
 exclude_dirs = ["tests"]
+# B101 assert_used — asserts are the test suite's idiom, and tests are excluded
+#   anyway; this covers the handful in library code used as invariants.
+# B404 "consider the security implications of the subprocess module" and
+# B603 "subprocess call with untrusted input" are skipped DELIBERATELY: running
+#   subprocesses is this package's entire purpose, so both fire on essentially
+#   every line of shell/runners/ and shell/process/ and would train readers to
+#   ignore the report.
+#
+# READ THIS BEFORE ASSUMING BANDIT COVERS SUBPROCESS SAFETY HERE — it largely
+# does not. What it still enforces is B602 (shell=True), which is the check that
+# actually matters for this repo and is deliberately NOT skipped. The real
+# guards on subprocess behaviour are the HostRunner tests, which use live
+# processes, and the honesty suite.
+#
+# An inline `# nosec B404` / `# nosec B603` in this repo suppresses nothing —
+# those codes are already skipped globally — so it reads like a silenced finding
+# where none exists. Write a plain justification comment instead.
 skips = ["B101", "B404", "B603"]
 
 [tool.pytest.ini_options]

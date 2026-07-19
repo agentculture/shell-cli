@@ -5,6 +5,110 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.1] - 2026-07-19
+
+### Fixed
+
+- `test_operation_ids_are_stable_and_unique` asserted `operation.id == operation.id` — an expression compared against itself. Since `id` is a plain frozen-dataclass field rather than a property, reading it twice cannot differ, so the assertion could never fail and pinned nothing. It now asserts stability across the derivations where an id could actually be lost (a JSON round-trip and a field-level `replace`), which matters because the id is the key an evidence record is filed under. Verified by mutation: making `from_dict` mint a fresh id fails the new test and passed the old one.
+
+## [0.13.0] - 2026-07-19
+
+### Added
+
+- `process.exec` and `process.shell`. `process.exec` takes argv and accepts `project` or `control`; `process.shell` takes a model-authored string and accepts `project` ONLY — a shell re-interprets the string after the gate read it, so which program runs is not settled by what was gated, and a control operation cannot honestly be selected that way (t84).
+- Every process result carries `output["confinement"]` with `path_confined: false` for BOTH kinds. The argv-versus-shell difference shows up only in the other keys, deliberately, so nobody infers 'argv, therefore confined' (t84).
+- `shell policy check` and `shell policy explain` — both call the same gate function `execute()` uses, never a re-derivation that could drift. `explain` reports ungated kinds EXPLICITLY rather than by omission, because `UNGATED` and `ALLOWED` are distinct (t85).
+- `shell operation show` retrieves a persisted evidence record; `EXIT_ENV_ERROR` (exit 2) is now genuinely reachable, closing a documented-but-unreachable contract (t85).
+- `execute(..., reveal_secrets_in_result=True)` — an explicit opt-in for callers that need real output. Default is redaction, and a revealed secret still NEVER reaches the persisted record. The choice is recorded as `evidence.secret_handling` (`none_declared`/`redacted`/`revealed`) so an opt-in is visible rather than silent (t88).
+
+### Fixed
+
+- SECURITY: an exploitable gate bypass. `apply_rewrite`'s Operation branch returned the candidate verbatim, so `arguments` could be any Mapping — including one whose `__getitem__` returned a different value on each read. A rewrite could have the gate judge `git status` while the handler ran `rm -rf /`; the object-identity test still passed, because the object genuinely was the same and only its values were unstable. `Operation.__post_init__` now deep-freezes arguments into immutable JSON-safe values, so a hostile mapping is read exactly once at construction and every construction path is covered. Found by independent review before shipping, reproduced, and pinned by regression tests for both the top-level and nested cases. No consumer was wired to this package, so it was never reachable in production (t88).
+- SECURITY: declared secrets were scrubbed from the evidence record but NOT from the live `OperationResult`. Since a consumer renders result output for the model, the one path a declared secret was guaranteed to travel was the unprotected one. The live result is now scrubbed by default (t88).
+- A persisted record's on-disk body carried no `persistence` block, though the contract documents it as part of the record. The block is now written with the fields knowable before the write, and `persisted` is explicitly null on disk with a note — no second write, no mutate-after-write, atomicity unchanged. On-disk and returned bodies therefore have different integrity digests, which is correct: they are different bodies, and each validates against its own bytes (t88).
+- `--command`'s auto-derived argparse dest collided with the top-level subparser dest, so every `policy check` saw `args.command == None` regardless of dispatch (t85).
+- `explain safety` still said the four safety layers were 'not yet extracted... not shipped behaviour'. All four ship. Corrected, keeping separate the claim that remains true: there is no execution isolation, and a process group is cleanup, never containment.
+- A test asserted `process.shell` was unregistered — true only in the worktree that wrote it, before t84 merged. It encoded one worktree's registry state as a permanent property; repointed at a kind no slice will ever register.
+
+## [0.12.0] - 2026-07-19
+
+### Added
+
+- `HostRunner.run_process` — commands spawn with `start_new_session=True` and lead their own process group; timeout and cancel escalate SIGTERM->group, bounded wait, SIGKILL->group, bounded wait. Termination is recorded as a PATH (steps, escalated, completed, group_signalled), not a fact (t80).
+- Per-platform orphan-prevention honesty carried as DATA on every outcome (`termination.orphan_prevention`), so a consumer never matches on `sys.platform`: POSIX reports `process-group` (real, but a descendant calling `setsid` escapes -- proven by test, and the runner then marks `output_complete=False` because that survivor holds the pipe open); Windows reports `direct-child-only`, where grandchildren can outlive the operation (t80).
+- `shell.fs.read` / `shell.fs.list` — line numbering PRECEDES truncation, matching colleague's recorded fix for its issue #240. Proven by reversing the implementation and observing the pin fail (t81).
+- `shell.fs.write` / `shell.fs.edit` — `bytes_written` is full content on write and replacement bytes only on edit, every number pinned against the committed colleague fixtures rather than hand-derived (t82).
+- `shell.fs.media` — vendors only `_MEDIA_TYPES`, `validate_attachment`, `build_part`. A test asserts `flatten_parts` and `IMAGE_TOKEN_ESTIMATE` are ABSENT, keeping the vendored slice from widening later (t83).
+- `check_write` is now wired: a write or edit targeting a configured read-only path is refused. This is path confinement, a different mechanism from the approvals gate, and the result still reads `UNGATED` because `fs.*` has no jurisdiction under that gate (t82).
+
+### Changed
+
+- Status surfaces (`CLAUDE.md`, `shell learn`, `shell overview`, `explain` root) said the repo was scaffold-only and the primitives were not extracted. Both were false. They now separate the two facts that were being conflated: the LIBRARY has the operation core, while the CLI still exposes only introspection verbs.
+- The bandit skip list is documented. B404/B603 are skipped deliberately (running subprocesses is this package's purpose), B602 (`shell=True`) is NOT skipped and remains enforced. An inline `# nosec B404`/`B603` here suppresses nothing and reads like a silenced finding.
+
+### Fixed
+
+- `test_handler_packages_predeclare_no_exports` asserted the live `shell.fs` namespace held no public attributes, which becomes impossible the moment any real submodule is imported -- Python binds it onto the parent package. Narrowed to non-module attributes, preserving what r8 actually guards: a stub or curated re-export declared in `__init__.py`.
+- `tests/test_fs_media.py` asserted on `handler_for('fs.media')` without importing the module that registers it, so it passed serially and failed under `pytest -n auto` where a worker may run only that file.
+
+## [0.11.0] - 2026-07-19
+
+### Added
+
+- Policy is evaluated INSIDE `operations.execute`, on the post-rewrite operation. After the rewrite there is exactly one operation value bound, so gating one form while running another is unexpressible rather than merely discouraged — pinned by an object-identity test (t79).
+- `apply_rewrite` — a rewrite may change arguments only. A `kind` change is rejected on its own terms (it would move the operation out of one gate's jurisdiction into another's); every other field is protected by comparing argument-blanked copies, so fields added later are covered automatically (t79).
+- An untrustworthy policy snapshot fails closed for `process.*` with `matched_rule="policy.untrustworthy"`. The `fs.*` carve-out is NOT converted into a denial — no approvals.json can gate a structured read, so refusing one would enforce a rule that could never have existed (t79).
+- Evidence is captured for every terminal state including denied and previewed. A raising sink, a failed write, or a broken record-builder mark the record degraded and never overturn the operation's outcome (t79).
+- `execution.handler_entered` and `execution.handler_disposition` (`not_reached`/`completed`/`crashed`/`unstated`) — the dispatcher STATES how far it got rather than letting downstream infer it from status (t79).
+
+### Fixed
+
+- `execution.applied` was derived from status and reported `true` for operations that never reached the handler — a denied mutation, a rejected rewrite, a rewrite that raised, and an unknown kind were all recorded as applied. An auditor reading those records would conclude a blocked operation ran. `applied` is now three-valued: `true`, `false`, and `null` reserved for a handler that was entered and crashed, where partial application is genuinely unknown and either boolean would be a fabricated claim (t79).
+
+## [0.10.1] - 2026-07-19
+
+### Fixed
+
+- `colleague_available()` verified only that a `colleague/` directory existed, while the characterization adapter needs colleague importable in its own interpreter. Against a bare clone — exactly what CI produces — it returned True and the live tests FAILED instead of skipping. It now verifies drivability by importing in the resolved interpreter with `--no-sync`, caches per root, and reports distinguishable skip reasons for not-found versus found-but-not-importable (t74a fixup).
+- Dropped the hardcoded `/home/spark/git/colleague` default in favour of `$SHELL_CLI_COLLEAGUE_ROOT` then sibling-checkout discovery anchored via `git rev-parse --git-common-dir`, so discovery resolves correctly from inside a linked worktree. A wrong guess can now only change a skip reason, never cause a failure on another machine (t74a fixup).
+
+## [0.10.0] - 2026-07-19
+
+### Added
+
+- `shell.evidence` — the evidence contract: per-operation records with redaction scope, retention, integrity digests, and an explicit degraded marker when a write fails (t77).
+- `docs/evidence-contract.md` — documents which secret classes are redacted and, explicitly, which are not: a declared secret is redacted, an undeclared secret echoed by a command is not (t77).
+- `shell.policy` — the policy evaluator ported from colleague with no config-dir coupling. Accepts pre-resolved candidate paths in increasing precedence order, or inline data; resolves no search order of its own (t78).
+- `shell.policy.snapshot` — snapshots policy from `source_root` and refuses candidates that are absolute, escape via `..`, or resolve inside `work_root`, so an operation cannot edit its own active authorization (t78).
+- `tests/characterization/` + `tests/fixtures/colleague/` — the six tool schemas pinned byte-for-byte and behavioural fixtures, generated from colleague at SHA 28fee29, driven through a provider-neutral `ToolProvider` protocol (t74a).
+
+### Changed
+
+- `Policy` distinguishes absent, malformed, unreadable, unresolved, and inline sources. All produce an empty policy and identical decisions, but a degraded gate appends a trust note to every verdict it issues, so it can never be mistaken for a repo that declared nothing (t78).
+- Evidence digests are taken AFTER redaction and truncation, labelled in-band as `sha256_scope: text-as-stored`. A digest of the unredacted stream would be an offline brute-force oracle for any short secret the record just removed (t77).
+
+### Fixed
+
+- CLAUDE.md claimed `check_file` has three live colleague call sites including `escalation.py:176`. It has two; `escalation.py:176` is `check_run_command("agtag escalate")`. The escalation gate is a command gate and inherits the shlex-token weakness, not the checksum path — which changes Milestone 3 scoping.
+- CLAUDE.md claimed an empty colleague policy is byte-identical to no policy via `to_dict()`. colleague's `Policy` has no `to_dict()`; the invariant is pinned at the loop level over `TaskResult.to_dict()`.
+
+## [0.9.0] - 2026-07-19
+
+### Added
+
+- `shell.operations` — `Operation`, execution profiles, handler registry, and the normalize -> policy gate -> preview -> handler -> evidence lifecycle pipeline (t76).
+- `shell.results` — neutral `OperationResult` with `previewed`/`denied`/`succeeded`/`failed`/`timed_out` status, policy verdict, effects, and evidence. `previewed` is its own status and is never reported as success (t76).
+- `shell.environment` — `Environment` with the workspace axis (`source_root`/`work_root`) and runner axis kept independent, never collapsed into one overloaded mode (t76).
+- `shell.runners.host.HostRunner` — identity and posture only; execution semantics land in t80. Documented as a guard, not a sandbox (t76).
+- `Environment.network_enforced` and `Evidence.network_enforced` — a declared network policy the host runner cannot enforce is now reported as unenforced rather than implying a control that does not exist (t76).
+- `tests/test_zero_deps.py` — zero-dependency guard shipping in the first implementation slice, with in-process, fresh-subprocess, and AST source-scan detectors (t76).
+- `tests/test_boundaries.py` — asserts the import graph contains no colleague and no webglass module (t76).
+- `scripts/handler_hashes.py` + `tests/test_drift_gate.py` — AST source-segment drift gate over colleague's six tool handlers, pinned at SHA 28fee29, wired into the CI inventory-gate job (t75).
+
+### Changed
+
+- `tests/test_honesty.py` now scans every `shell/**/*.py` surface for overclaims, not just the documentation set (t76).
+
 ## [0.8.7] - 2026-07-19
 
 ### Changed

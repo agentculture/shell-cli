@@ -32,6 +32,8 @@ _VERBS = [
     "explain <path> — markdown docs for a topic",
     "overview — this descriptive snapshot",
     "doctor — check the agent-identity invariants",
+    "policy check / policy explain — evaluate and explain the operation-policy gate",
+    "operation show — retrieve persisted evidence for an operation id",
 ]
 
 _MISSION = [
@@ -43,8 +45,9 @@ _MISSION = [
 ]
 
 _STATUS = [
-    "scaffold — only the introspection verbs below are implemented",
-    "the six primitives, confinement, and policy are not extracted yet",
+    "policy and operation are real CLI nouns; env/fs/process/git are still "
+    "library-only — no CLI verb executes fs.read or a shell command itself",
+    "the library has the fs primitives, confinement, policy, evidence and HostRunner",
     "tracking issue: https://github.com/agentculture/shell-cli/issues/1",
 ]
 

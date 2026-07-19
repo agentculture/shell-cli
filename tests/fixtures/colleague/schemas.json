@@ -1,0 +1,132 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "read_file",
+      "description": "Read a UTF-8 text file, relative to the repo root. Each line in the result is prefixed with its exact 1-based line number and a tab (cat -n style, e.g. '    12\\tsome code'), so you can cite an exact file:line location. The line-number prefix is DISPLAY ONLY — it is never part of the file on disk, so never include it in edit_file's old_string.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Path relative to the repo root."
+          }
+        },
+        "required": [
+          "path"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "view_media",
+      "description": "Load an image file from the repo into the conversation so you can see it (the media sibling of read_file — read-only, repo-confined, images only). The image arrives as a content part on the next turn. Only useful when the serving model accepts image input; a text-only model will see a placeholder.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Path relative to the repo root."
+          }
+        },
+        "required": [
+          "path"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "write_file",
+      "description": "Create or overwrite a UTF-8 text file, relative to the repo root.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Path relative to the repo root."
+          },
+          "content": {
+            "type": "string",
+            "description": "Full file contents to write."
+          }
+        },
+        "required": [
+          "path",
+          "content"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "edit_file",
+      "description": "Replace an exact string in an existing UTF-8 text file. Prefer this over write_file for ANY change to an existing file: it only needs the changed text, not the whole file, so it is far faster and cheaper on large files. 'old_string' must match the file exactly, including whitespace and indentation, and must be unique unless 'replace_all' is true. Use write_file only to create a new file or do a wholesale rewrite.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Path relative to the repo root."
+          },
+          "old_string": {
+            "type": "string",
+            "description": "Exact text to replace (must match the file verbatim)."
+          },
+          "new_string": {
+            "type": "string",
+            "description": "Text to replace it with."
+          },
+          "replace_all": {
+            "type": "boolean",
+            "description": "Replace every occurrence instead of requiring a unique match (default false)."
+          }
+        },
+        "required": [
+          "path",
+          "old_string",
+          "new_string"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_dir",
+      "description": "List the entries of a directory, relative to the repo root.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Directory relative to the repo root (default: root)."
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "run_command",
+      "description": "Run a shell command. Each call runs in a FRESH shell with the working directory already at the repo root, so `cd` and environment changes do NOT persist to later calls — never `cd` to reach a path; use repo-relative paths directly.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "The command line to run."
+          }
+        },
+        "required": [
+          "command"
+        ]
+      }
+    }
+  }
+]

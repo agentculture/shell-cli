@@ -1,0 +1,30 @@
+{
+  "pinned_sha": "28fee290c51fc4310b9fc576981809ad5c3132c6",
+  "pinned_version": "1.51.0",
+  "handlers": [
+    {
+      "name": "_edit_file",
+      "sha256": "6f7bf250ba9c222f0a13bf655d888b514986ba057eef403b8de4098207718b95"
+    },
+    {
+      "name": "_list_dir",
+      "sha256": "d77318d1c438185bfeb5ce7dd1507a69fdc8833e74395d0ce44477b8f305c568"
+    },
+    {
+      "name": "_read_file",
+      "sha256": "f79b7215b7b26b852e30bf95a6d9b13732f3e931dd6819c1643daa79cf23fdc1"
+    },
+    {
+      "name": "_run_command",
+      "sha256": "044c20ce67899e4ccc3c185b5439b7af568f7f3b2c168d83d76923a872a83f89"
+    },
+    {
+      "name": "_view_media",
+      "sha256": "4b664a76592b656e27c39bfd9d58b604014e467f4c687b94035b6c024757ecb8"
+    },
+    {
+      "name": "_write_file",
+      "sha256": "199599b17b7b00ae5da86252f953b555ad6b08ea25ac6a02aec39cab346e989a"
+    }
+  ]
+}

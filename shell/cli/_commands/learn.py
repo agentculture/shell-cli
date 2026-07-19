@@ -31,8 +31,13 @@ relying on it.
 
 Status
 ------
-Scaffold: the six primitives, the path confinement, and the approval policy are
-not extracted yet. Only the introspection verbs below are implemented.
+The library has the operation core: fs.read/list/write/edit/media, the policy
+evaluator, the evidence contract, and HostRunner execution are built and green.
+The CLI is catching up: `policy` and `operation` are now real CLI nouns --
+`policy check`/`policy explain` evaluate the same policy gate execute() uses,
+`operation show` retrieves persisted evidence. The env/fs/process/git verb
+groups are not exposed yet -- no CLI verb executes fs.read or a shell command
+itself, only ones that introspect the policy/evidence around that execution.
 See https://github.com/agentculture/shell-cli/issues/1
 
 Commands
@@ -43,6 +48,9 @@ Commands
   shell overview           Descriptive snapshot of the agent.
   shell doctor             Check the agent-identity invariants.
   shell cli overview       Describe the CLI surface itself.
+  shell policy check       Evaluate the run_command policy gate.
+  shell policy explain     List gated/ungated operation kinds.
+  shell operation show     Retrieve persisted operation evidence.
 
 Machine-readable output
 -----------------------
@@ -79,8 +87,9 @@ def _as_json_payload() -> dict[str, object]:
             "and careless behaviour, not an adversarial one."
         ),
         "status": (
-            "scaffold — the six primitives, path confinement, and approval policy are "
-            "not extracted yet; only the introspection verbs are implemented"
+            "the operation core is built in the library (fs primitives, policy, "
+            "evidence, HostRunner); the CLI now also exposes policy and operation "
+            "as real nouns -- env/fs/process/git verb groups are still library-only"
         ),
         "commands": [
             {"path": ["whoami"], "summary": "Identity probe from culture.yaml."},
@@ -89,6 +98,18 @@ def _as_json_payload() -> dict[str, object]:
             {"path": ["overview"], "summary": "Descriptive snapshot of the agent."},
             {"path": ["doctor"], "summary": "Check the agent-identity invariants."},
             {"path": ["cli", "overview"], "summary": "Describe the CLI surface."},
+            {
+                "path": ["policy", "check"],
+                "summary": "Evaluate the run_command policy gate for one operation.",
+            },
+            {
+                "path": ["policy", "explain"],
+                "summary": "List gated kind prefixes and every kind's policy status.",
+            },
+            {
+                "path": ["operation", "show"],
+                "summary": "Retrieve persisted evidence for an operation id.",
+            },
         ],
         "exit_codes": {
             "0": "success",
