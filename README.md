@@ -74,12 +74,22 @@ intent -> Operation -> policy + preview -> environment backend
 selects what may be observed and changed; a runner axis selects what executes
 it.
 
-| Workspace | Runner | Guarantee |
-|---|---|---|
-| Checkout | Host | Guarded host execution; no isolation |
-| Worktree | Host | Reviewable/recoverable changes; no process isolation |
-| Checkout | Container | Execution isolation against the selected checkout |
-| Worktree | Container | Preferred autonomous mode |
+**Every row below is a design target, not a description of shipped behaviour.**
+Neither runner exists yet. The `Intended guarantee` column says what each
+combination is *meant* to provide once built; today it provides nothing, because
+there is nothing there. Read it as a specification, and do not rely on any row
+as a present-tense security property.
+
+| Workspace | Runner | Intended guarantee | Built? |
+|---|---|---|---|
+| Checkout | Host | Guarded host execution; no isolation | No |
+| Worktree | Host | Reviewable/recoverable changes; no process isolation | No |
+| Checkout | Container | Execution isolation against the selected checkout | No |
+| Worktree | Container | Preferred autonomous mode | No |
+
+When the container rows are built, their actual profile gets measured and
+recorded per operation, and documented separately from the host claim above.
+Until then the honest summary of what shell-cli isolates is: **nothing**.
 
 ### Three operation profiles
 

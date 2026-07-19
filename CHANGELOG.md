@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.7] - 2026-07-19
+
+### Changed
+
+- Honesty guard: the environment-table row selector is now structural (rows after the pipe-table header separator) instead of matching the strings Host or Container. The old filter would have silently matched nothing — and so asserted nothing — the moment a runner was renamed. Verified to fail against a table whose runner column reads Firecracker.
+- colleague_inventory: corrected a misleading fail closed comment on the unbound-attribute fall-through. The bound and unbound cases are not in tension, but the fall-through is a known false-positive source (issue #7), not a safety property.
+
+## [0.8.6] - 2026-07-19
+
+### Changed
+
+- Delivery summary: defined the status vocabulary (released / submitted / blocked / not ours) and corrected t72/t73 from open to merged; clarified that the deviation classifications are agent-proposed, not operator-confirmed; explained that the filename date is the plan creation date per the devague lane convention, not the run date.
+
+## [0.8.5] - 2026-07-19
+
+### Changed
+
+- colleague_inventory is now described honestly as a DRIFT DETECTOR against a pinned baseline, not an enforcement gate. An adversarial live test landed 30 executed evasions at exit 0 (issue #7); the claim that a new unclassified spawn path fails CI is retracted in the scanner docstring, the CI job comment, CLAUDE.md, and the delivery summary.
+- CLAUDE.md now qualifies the shell=True figure: detection requires a literal ast.Constant, so two shell=True sites describes how colleague spells its arguments at the pinned commit, not how often it shells out.
+
+## [0.8.4] - 2026-07-19
+
+### Added
+
+- Two honesty tests guarding the framing of the environment matrix, not just the word sandbox — the previous guard could not catch a table cell reading Execution isolation.
+
+### Fixed
+
+- colleague_inventory: alias imports no longer evade the scanner. import subprocess as sp; sp.run(...) and from subprocess import run; run(...) were both invisible to the literal dotted-name match, so a new unmediated spawn path could have landed without failing the gate. Import bindings are now resolved before matching. Also removes the mirror-image false positive, where import mything as os; os.system(...) was wrongly counted.
+- colleague_inventory: a scan failure is no longer fail-open. An unparseable or unreadable file was silently treated as containing no spawns, so --check could pass while part of the checkout went unscanned. Skipped files are now recorded, published in the JSON and text output, and force exit 2 — an untrustworthy scan has no verdict to give.
+- colleague_inventory: allowlist matching is platform-independent. Module keys are normalised with as_posix(), so resident/steward.py matches on Windows instead of reporting a false unclassified path.
+- README: the environment matrix no longer implies isolation that does not exist. Every row is marked as a design target with an explicit Built? column, all No today.
+
+## [0.8.3] - 2026-07-19
+
+### Added
+
+- docs/deliveries/2026-07-18-guarded-local-operations-plane.md: the delivery summary closing the devague loop for the Milestone 0 opening slice — planned versus actual, mid-work decisions, the three recorded deviations, and delivery claims stated at the strength the evidence supports.
+
 ## [0.8.2] - 2026-07-19
 
 ### Added

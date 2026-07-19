@@ -196,3 +196,61 @@ def test_failure_message_reports_the_offending_text() -> None:
     """Regression: capturing groups made findall report ``[('', '', '')]``."""
     hits = overclaims("Commands are fully isolated.")
     assert hits == ["fully isolated"]
+
+
+# --- 4. unbuilt capability is not stated as a present-tense guarantee -------
+#
+# The ``_CLAIM`` regex above catches the word "sandbox" and the phrase "fully
+# isolated". It cannot catch a *table* that asserts "Execution isolation" for a
+# Container runner that does not exist — which is exactly what shipped in the
+# README's environment matrix and was caught by an external reviewer, not by
+# this file.
+#
+# The design-target table is legitimate: the two-axis model is the spec, and
+# writing it down is the point. What is not legitimate is presenting it so a
+# reader takes it for shipped behaviour. So the guard is on the *framing*, not
+# on the words: every row must declare whether it is built.
+
+
+def _environment_table_section() -> str:
+    text = (_REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    _, _, rest = text.partition("### Environments have two independent axes")
+    assert rest, "README lost the environment-axes section"
+    section, _, _ = rest.partition("\n### ")
+    return section
+
+
+def test_environment_table_is_framed_as_a_design_target() -> None:
+    section = _environment_table_section().lower()
+    assert "design target" in section, (
+        "the environment matrix must say it is a design target — otherwise a "
+        "reader takes the Guarantee column for shipped behaviour"
+    )
+
+
+def _environment_table_rows() -> list[list[str]]:
+    """Every data row of the environment table, as stripped cells.
+
+    Selected structurally — the pipe-table's header separator marks where data
+    starts — rather than by matching on cell *content*. An earlier version
+    filtered rows containing "Host" or "Container", which silently matched
+    nothing (and so asserted nothing) the moment a runner was renamed. A guard
+    that quietly stops guarding is worse than no guard, so the shape of the
+    table decides what counts as a row, not the words in it.
+    """
+    lines = [ln.strip() for ln in _environment_table_section().splitlines()]
+    table = [ln for ln in lines if ln.startswith("|")]
+    separators = [i for i, ln in enumerate(table) if set(ln) <= set("|-: ")]
+    assert separators, "environment table lost its header separator"
+    return [[c.strip() for c in ln.strip("|").split("|")] for ln in table[separators[0] + 1 :]]
+
+
+def test_every_environment_row_declares_whether_it_is_built() -> None:
+    """A runner row may describe intent, but never silently imply it exists."""
+    rows = _environment_table_rows()
+    assert rows, "expected data rows in the environment table"
+    for cells in rows:
+        assert cells[-1] in {
+            "No",
+            "Yes",
+        }, f"environment row must end in a Built? cell of No/Yes, got {cells[-1]!r}: {cells}"
