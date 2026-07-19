@@ -233,3 +233,6 @@ skills.local.yaml
 .devague/questions/
 
 .devague/reviews/
+
+# Agent worktrees (fan-out isolation) — never commit these
+.claude/worktrees/

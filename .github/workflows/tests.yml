@@ -182,6 +182,24 @@ jobs:
           set -euo pipefail
           python3 scripts/handler_hashes.py .colleague-src --check
 
+      # KNOWN GAP — the characterization suite's live-colleague tests do NOT
+      # run in CI, and are not wired in here on purpose.
+      #
+      # They need colleague *importable* (the adapter drives colleague's own
+      # interpreter so `agentfront` resolves), not merely present. This job has
+      # a bare clone with no environment, so running them here would mean
+      # installing colleague's dependency tree on every push.
+      #
+      # What covers the risk instead: the handler-source drift gate above is
+      # pure AST over the checked-out source, needs no import, and fails on any
+      # change to the six handlers — which is the drift that would invalidate
+      # the committed fixtures. The ~50 characterization tests that compare
+      # against those committed fixtures DO run in the main `test` job; only
+      # the 8 that re-derive from live colleague are skipped.
+      #
+      # Do not read this as "the fixtures are verified against colleague on
+      # every push". They are not. Tracked as a follow-up.
+
   version-check:
     # Only run on PR events. On push to main after a merged PR, the comparison
     # would always fail (PR_VERSION == MAIN_VERSION because HEAD and origin/main
