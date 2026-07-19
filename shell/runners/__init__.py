@@ -15,17 +15,22 @@ to infer what protection it got from the runner's *name*:
   does not retroactively upgrade the host path, and one sentence must never
   cover both.
 
-The protocol is deliberately narrow. Process execution semantics — argv
-handling, process groups, timeout escalation, output bounding — are the next
-slice's work; adding a ``run_process`` member here that the only implementation
-raises on would be an abstraction with no consumer and a lie about the shape.
+The protocol stays narrow: it declares only what an environment genuinely needs.
+``run_process`` is here because there is now an implementation that satisfies it
+end to end — argv handling, process groups, timeout and cancellation escalation,
+bounded output. Its signature is deliberately free of host-specific vocabulary
+(no session flags, no signal numbers) so a container runner can satisfy the same
+contract by wrapping the request rather than by widening it.
 """
 
 from __future__ import annotations
 
+import threading
 from typing import Any, Protocol, runtime_checkable
 
-__all__ = ["Runner"]
+from shell.runners.types import ProcessOutcome, ProcessRequest
+
+__all__ = ["ProcessOutcome", "ProcessRequest", "Runner"]
 
 
 @runtime_checkable
@@ -45,4 +50,24 @@ class Runner(Protocol):
 
     def describe(self) -> dict[str, Any]:
         """Return a JSON-serializable description of this runner."""
+        ...  # pragma: no cover - protocol declaration
+
+    def run_process(
+        self,
+        request: ProcessRequest,
+        *,
+        cancel: threading.Event | None = None,
+    ) -> ProcessOutcome:
+        """Run one process to completion, to its deadline, or to a cancellation.
+
+        Implementations do not raise for anything the command does. A command
+        that exits non-zero, is cut off by its timeout, or cannot be started at
+        all is an *outcome*, because the caller is a pipeline that must record
+        something for every operation and an exception would lose it.
+
+        *cancel* is polled, not delivered. Setting it asks the runner to stop
+        waiting and begin the same termination escalation a timeout would, and
+        the path that escalation actually took is reported on
+        ``outcome.termination`` in both cases.
+        """
         ...  # pragma: no cover - protocol declaration
