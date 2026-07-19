@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.3] - 2026-07-19
+
+### Added
+
+- docs/deliveries/2026-07-18-guarded-local-operations-plane.md: the delivery summary closing the devague loop for the Milestone 0 opening slice — planned versus actual, mid-work decisions, the three recorded deviations, and delivery claims stated at the strength the evidence supports.
+
 ## [0.8.2] - 2026-07-19
 
 ### Added
