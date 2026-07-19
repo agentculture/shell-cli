@@ -19,11 +19,35 @@ Usage::
     python3 scripts/colleague_inventory.py /path/to/colleague --json
     python3 scripts/colleague_inventory.py /path/to/colleague --check
 
-``--check`` exits 1 when an unclassified spawn path exists, which is what CI
-runs as a known-debt gate. Exit 2 is reserved for a scanner/environment error
-(a missing or unreadable checkout, or a file that could not be parsed) so CI
-can distinguish "a new unclassified path landed" from "the scan itself cannot
-be trusted" — a gate that silently no-ops is worse than no gate.
+``--check`` exits 1 when an unclassified spawn path exists. Exit 2 is reserved
+for a scanner/environment error (a missing or unreadable checkout, or a file
+that could not be parsed) so CI can distinguish "a new unclassified path
+landed" from "the scan itself cannot be trusted" — a check that silently
+no-ops is worse than no check.
+
+WHAT THIS IS, AND WHAT IT IS NOT
+--------------------------------
+
+This is a **drift detector against a pinned baseline**. It is *not* an
+enforcement boundary, and nothing here should be described as one.
+
+An adversarial live test (issue #7) landed **30 executed evasions at exit 0**.
+Three limits are worth knowing before you rely on any number this prints:
+
+* ``ALLOWLIST`` is keyed per **module**, not per **site**. A brand-new spawn
+  added to an already-allow-listed module — including ``shell=True`` — is
+  invisible by design. 15 of colleague's modules are already allow-listed.
+* ``_SPAWN_CALLS`` is a literal set. ``subprocess.getoutput`` and ~14 other
+  real spawn APIs are not in it and are not detected.
+* Resolution follows *import* bindings only. Assignment aliasing
+  (``sp = subprocess``), ``getattr``, dynamic import, and sibling re-export all
+  defeat it.
+
+What it does well is reproduce a known inventory at an exact commit and notice
+when that inventory moves. That is genuinely useful and it is the whole claim.
+A static AST scan cannot stop a determined author, so the honest ceiling here
+is the same posture the rest of this repo commits to: it catches accidental and
+careless drift, not adversarial evasion.
 """
 
 from __future__ import annotations

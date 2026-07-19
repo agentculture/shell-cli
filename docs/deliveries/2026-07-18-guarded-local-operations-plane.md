@@ -40,10 +40,100 @@ Claims are stated at the strength the evidence supports, and no higher.
 |---|---|---|
 | A release can no longer publish while any quality gate is red | `publish`/`test-publish` now `needs: [test, gates, smoke]`; all three observed passing on PR #3 and #5 in real CI | **High** — verified in CI, not just written |
 | The published wheel imports, exposes the `shell` console script, and declares zero runtime dependencies | `smoke` job green in CI; also live-tested locally against a real built wheel before commit | **High** |
-| A new unclassified subprocess path in colleague will fail shell-cli's CI | `inventory-gate` green in CI; synthetic fixture with an unclassified module exits 1; allow-listed-only fixture exits 0 | **High** — both directions pinned by test |
-| colleague has 21 spawn sites across 15 modules, 13 of them debt | Scanner output at pinned SHA `28fee29`, asserted by the CI `sha_matches` guard | **High** — mechanically derived, not transcribed |
+| A new unclassified subprocess path in colleague will fail shell-cli's CI | **Retracted.** An adversarial live test landed 30 executed evasions at exit 0 | **None — this claim was false and is withdrawn.** See *Adversarial live test* below |
+| The scanner reproduces a pinned inventory and detects drift from it | Reproduces 21 / 15 / 13 at SHA `28fee29` exactly; `sha_matches` guard asserts the tree | **High** — this is what the tool actually does |
+| colleague has 21 spawn sites across 15 modules, 13 of them debt | Scanner output at pinned SHA `28fee29`, asserted by the CI `sha_matches` guard; unchanged after the alias-detection fix | **High** — mechanically derived, not transcribed |
 | Every guidance surface now describes the operations plane | README, AGENTS.colleague.md, CLAUDE.md rewritten; `tests/test_honesty.py` green | **Medium** — no test asserts *framing*, only the honesty posture |
 | The extraction seam is proven | — | **None. Not claimed.** No `Operation` type exists yet. |
+
+## Post-merge review found four real defects
+
+The most important thing this run learned. After `t73` merged, Qodo posted four
+findings against work that had passed the full local suite, all CI gates,
+SonarCloud's quality gate, and a TDD merge gate. All four were legitimate and
+all four are fixed.
+
+| # | Defect | Why the gates missed it |
+|---|---|---|
+| 1 | `README` asserted container isolation for an unbuilt runner | `test_honesty.py`'s `_CLAIM` regex matches "sandbox" and "fully isolated" — it cannot see a table cell reading "Execution isolation" |
+| 2 | Alias imports evaded the scanner (`import subprocess as sp`) | Every test used plain `import subprocess`; the tests shared the author's blind spot |
+| 3 | A scan failure was fail-open — an unparseable file counted as "no spawns" | A test asserted the file was skipped *without crashing*, which is the wrong property to assert of an enforcement tool |
+| 4 | `ALLOWLIST` matching broke on Windows separators | CI runs Linux only |
+
+Defect 2 is the one that matters. The gate's entire stated value is that a new
+unmediated spawn path cannot land unnoticed — and for the window between merge
+and fix, `import subprocess as sp; sp.run(...)` would have walked straight
+through it. The pinned counts did not change, because colleague 1.51.0 uses
+plain `import subprocess` throughout: **the numbers were honest, the guarantee
+was not.** A latent bypass, not an active under-report.
+
+Two durable responses rather than four point fixes:
+
+- the honesty suite now guards the *framing* of the environment matrix (every
+  row must declare whether it is built), not just the word "sandbox" — and both
+  new tests were verified to fail against the table as previously shipped;
+- fixing defect 2 also removed a mirror-image false positive nobody had
+  reported: `import mything as os` followed by `os.system(...)` was being
+  counted.
+
+Tests grew 66 → 92 across the fixes.
+
+## Adversarial live test — the delivered gate does not do what it claimed
+
+After the Qodo fixes landed, the work was live-tested by three independent
+minds. One of them broke it.
+
+**An adversarial pass produced 30 executed evasions at exit 0 and 6 false
+positives.** Every evasion fixture was run and observed to create a real
+process. Full inventory: issue #7.
+
+The claim *"a new unclassified subprocess path in colleague will fail
+shell-cli's CI"* — made in `t73`, in the issue #1 §17 comment, and in the first
+draft of this document — **is retracted**. Three findings defeat it:
+
+- **`ALLOWLIST` is keyed per module, not per site.** Three brand-new spawns
+  added to `tools.py` — two `shell=True`, running `rm -rf` and
+  `cat /etc/shadow` — returned exit 0 with no signal. 15 modules are already
+  allow-listed, so a new unmediated path in any existing file is invisible **by
+  design**. This is architectural, not a missing case.
+- **`subprocess.getoutput("cmd")` defeats it in one line.** `_SPAWN_CALLS` is a
+  12-entry literal set; ~15 real spawn APIs are absent.
+- **One level of indirection defeats resolution.** `sp = subprocess; sp.run(...)`
+  passes, so the alias hardening from the Qodo fixes covers only `import ... as`.
+
+What the tool actually does — reproduce a pinned inventory exactly and notice
+when it drifts — it does well, and the four honest baselines all pass. So the
+response was to relabel rather than overclaim-and-patch: the scanner docstring,
+the CI job comment, `CLAUDE.md`, this document, and the issue #1 comment now all
+describe a **drift detector against a pinned baseline**, never an enforcement
+gate. The structural fixes are scoped in #7 as their own reviewed slice, because
+they change the pinned baseline and the tool's contract.
+
+The honest ceiling is the same posture this repo already commits to for the
+execution guard: it catches accidental and careless drift, not adversarial
+evasion. The tooling should promise no more than the product does.
+
+## Clean-room live test — the documentation is executable
+
+A second mind, given only the written docs and forbidden from using outside
+knowledge to patch over gaps, reproduced the whole surface: **clean pass, zero
+documentation defects.** Every README Quickstart command ran verbatim; all six
+CLI verbs and their `--json` twins behaved as documented; stdout/stderr never
+mixed and no error path leaked a traceback; the release runbook's gate chain
+matched `publish.yml` line for line; and the `smoke` job reproduced by hand in a
+genuine `python3 -m venv` — wheel installs, declares zero runtime dependencies,
+`import shell` resolves to the installed package, and `bin/shell` exists while
+`bin/shell-cli` does not.
+
+One real gap: **exit code 2 is documented policy but currently unreachable.**
+`EXIT_ENV_ERROR` is defined in `shell/cli/_errors.py` with zero call sites, so
+no CLI command can produce it today. Not false — the docs phrase it as policy,
+not a per-command guarantee — but a newcomer verifying the exit-code contract
+can exercise 0 and 1 and never 2.
+
+## Third mind — colleague
+
+Reported under *Drift From Plan* (`d1`). It contributed nothing to this run.
 
 ## Mid-work Decisions
 
@@ -98,9 +188,18 @@ advisory.**
 3. Milestone 1 proper, beginning with `t76` — the foundation slice that ships
    `Operation`/`OperationResult`/`Environment` together with the zero-dep guard,
    the honesty gate, and the negative-import check.
-4. Upstream follow-ups found during this run: colleague tool-calling failure
-   (`d1`), `devex pr open --body-file -` traceback, and the `devague summary`
-   rejected-task defect.
+4. **Harden or retire the inventory scanner (#7).** Per-site pinning is the only
+   fix for the module-granularity hole; widening the detected-call set and
+   making binding resolution scope-aware close the rest. Until then the tool
+   stays labelled a drift detector.
+5. Make exit code 2 reachable, or stop documenting it as part of the CLI's
+   exit-code policy. `EXIT_ENV_ERROR` currently has zero call sites.
+6. Upstream follow-ups found during this run: the colleague tool-calling failure
+   (`d1`); `devex pr open --body-file -` raising a traceback instead of reading
+   stdin; `devex pr reply` accepting `"resolve": true` and silently resolving
+   nothing (reported 4 replies / 0 resolved / 0 failures — the threads had to be
+   resolved via GraphQL); and the `devague summary` rejected-task defect
+   (devague#88).
 
 ## Process Notes
 

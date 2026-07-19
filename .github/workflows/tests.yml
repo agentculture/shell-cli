@@ -75,21 +75,28 @@ jobs:
         run: uv run teken cli doctor . --strict
 
   inventory-gate:
-    # The known-debt gate for colleague's process-spawn paths.
+    # Drift detector for colleague's process-spawn inventory.
     #
     # WHY: shell-cli exists to become the single mediated local-operations
-    # plane. That only holds if colleague stops growing *new* unmediated
-    # subprocess paths while the known ones migrate. This job fails the moment
-    # an unclassified spawn path appears, and publishes `debt_remaining` — the
-    # count of modules still owning their own spawn — on every run, so the
-    # number trends visibly toward the Milestone 3 target of zero.
+    # plane. Tracking where colleague spawns processes, and noticing when that
+    # set moves, is what keeps the Milestone 3 migration honest. This job
+    # publishes `debt_remaining` — the count of modules still owning their own
+    # spawn — on every run, so the number trends visibly toward zero.
     #
     # This job REPORTS debt; it does not fail on it. Driving 13 -> 0 is
-    # Milestone 3 work, not a gate today.
+    # Milestone 3 work.
     #
-    # agentculture/colleague is public, so the gate clones it at the pinned SHA
+    # WHAT THIS JOB DOES NOT DO: it is not an enforcement boundary and must not
+    # be described as one. An adversarial live test (issue #7) landed 30
+    # executed evasions at exit 0 — most importantly, ALLOWLIST is keyed per
+    # MODULE, so a new spawn added to any of the 15 already-allow-listed
+    # modules passes green. Read a green run as "the inventory has not drifted
+    # in the ways this scanner can see", never as "no new unmediated spawn path
+    # was added".
+    #
+    # agentculture/colleague is public, so this clones it at the pinned SHA
     # rather than depending on a local checkout. If the clone fails the job
-    # fails loudly — a gate that silently no-ops is worse than no gate.
+    # fails loudly — a check that silently no-ops is worse than no check.
     runs-on: ubuntu-latest
     permissions:
       contents: read

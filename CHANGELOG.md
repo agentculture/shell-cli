@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.5] - 2026-07-19
+
+### Changed
+
+- colleague_inventory is now described honestly as a DRIFT DETECTOR against a pinned baseline, not an enforcement gate. An adversarial live test landed 30 executed evasions at exit 0 (issue #7); the claim that a new unclassified spawn path fails CI is retracted in the scanner docstring, the CI job comment, CLAUDE.md, and the delivery summary.
+- CLAUDE.md now qualifies the shell=True figure: detection requires a literal ast.Constant, so two shell=True sites describes how colleague spells its arguments at the pinned commit, not how often it shells out.
+
 ## [0.8.4] - 2026-07-19
 
 ### Added

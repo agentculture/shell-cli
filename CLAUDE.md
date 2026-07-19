@@ -489,14 +489,21 @@ was already wrong. Run the scanner:
 
 ```bash
 python3 scripts/colleague_inventory.py /path/to/colleague          # report
-python3 scripts/colleague_inventory.py /path/to/colleague --check  # CI gate
+python3 scripts/colleague_inventory.py /path/to/colleague --check  # drift check
 ```
 
 Against colleague 1.51.0 at commit `28fee290c51fc4310b9fc576981809ad5c3132c6`
 it reports **21 process-spawn literals across 15 modules** — 6 `project`, 15
-`control`, 0 owned by `observe` — with exactly two `shell=True` sites
+`control`, 0 owned by `observe` — with two `shell=True` sites
 (`hooks.py:405`, `tools.py:1022`), plus ~40 filesystem-mutation sites that are
 genuine runtime-private bookkeeping confined to `.colleague/`.
+
+**Read those numbers for what they are.** They describe what a static AST scan
+can see in source that spells its calls plainly. `shell=True` detection in
+particular requires a literal `ast.Constant`, so "two `shell=True` sites" is a
+statement about how colleague spells its arguments at this commit, not a
+measurement of how often it shells out. `shell=SH` or `**{"shell": True}` would
+report nothing.
 
 An earlier hand survey of this repo reported *16* modules. It was wrong: the
 AST scan shows the subprocess-importer set and the spawn-literal set are
@@ -508,13 +515,25 @@ There are **zero** `os.system`, `asyncio.create_subprocess_*`, `os.popen`,
 explicitly as vacuously satisfied rather than silently.
 
 The scanner's `ALLOWLIST` is a **known-debt allowlist**: it records every module
-permitted to spawn today, tagged with its profile and a debt flag, so a *new*
-unclassified path fails `--check` immediately while the known paths are tracked
-as scheduled migrations. Debt starts at **13 modules and must reach zero by the
-end of Milestone 3** — a debt entry is a scheduled migration, never a permanent
-exemption. `colleague/tests/test_boundary.py` already pins the importing-module
-set on colleague's side, so this extends an enforced invariant rather than
-inventing one.
+permitted to spawn today, tagged with its profile and a debt flag, so the known
+paths are tracked as scheduled migrations. Debt starts at **13 modules and must
+reach zero by the end of Milestone 3** — a debt entry is a scheduled migration,
+never a permanent exemption. `colleague/tests/test_boundary.py` already pins the
+importing-module set on colleague's side.
+
+**The scanner is a drift detector, not an enforcement gate — do not describe it
+as one.** An earlier version of this file, of `t73`, and of the issue #1 §17
+comment all claimed a new unclassified path would fail CI immediately. An
+adversarial live test landed **30 executed evasions at exit 0** and that claim
+is retracted; the full inventory is
+[issue #7](https://github.com/agentculture/shell-cli/issues/7). The one that
+matters architecturally: `ALLOWLIST` is keyed per **module**, not per **site**,
+so a brand-new `shell=True` spawn added to any of the 15 already-allow-listed
+modules — `tools.py` included — passes green with no signal. Widening the
+detected-call set does not fix that; per-site pinning would.
+
+Read a green `--check` as *"the inventory has not drifted in the ways this
+scanner can see"*, never as *"no new unmediated spawn path was added"*.
 
 Ambiguities worth adjudicating rather than assuming:
 
