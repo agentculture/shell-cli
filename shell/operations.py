@@ -64,10 +64,17 @@ import time
 import uuid
 from dataclasses import dataclass, field, replace
 from enum import Enum
+from types import MappingProxyType
 from typing import Any, Callable, Mapping
 
 from shell.environment import Environment
-from shell.evidence import EvidenceRecord, EvidenceStore, HandlerDisposition, capture
+from shell.evidence import (
+    EvidenceRecord,
+    EvidenceStore,
+    HandlerDisposition,
+    Redactor,
+    capture,
+)
 from shell.policy import Policy
 from shell.results import (
     SCHEMA_VERSION,
@@ -77,6 +84,7 @@ from shell.results import (
     OperationStatus,
     PolicyDecision,
     PolicyVerdict,
+    SecretHandling,
 )
 
 __all__ = [
@@ -88,9 +96,11 @@ __all__ = [
     "UnknownOperationKind",
     "apply_rewrite",
     "execute",
+    "freeze",
     "normalize",
     "register",
     "registered_kinds",
+    "thaw",
 ]
 
 
@@ -129,6 +139,73 @@ class ExecutionProfile(str, Enum):
 _REQUIRES_APPLY = frozenset(
     {OperationIntent.MUTATE, OperationIntent.EXECUTE, OperationIntent.LIFECYCLE}
 )
+
+
+def _is_mapping(value: Any) -> bool:
+    """Whether *value* should be read as a mapping.
+
+    Duck-typed rather than a bare ``isinstance(value, Mapping)`` check, because a
+    class implementing ``keys`` and ``__getitem__`` without registering as a
+    :class:`~collections.abc.Mapping` is consumed as a mapping by everything
+    downstream — ``dict()`` accepts it, and a handler doing ``arguments["path"]``
+    can read it. Recognising only registered mappings would leave exactly that
+    shape unfrozen, which is the hole this function exists to close.
+    """
+    if isinstance(value, Mapping):
+        return True
+    return hasattr(value, "keys") and hasattr(value, "__getitem__")
+
+
+def freeze(value: Any) -> Any:
+    """Recursively convert *value* into immutable, JSON-shaped equivalents.
+
+    Mappings become :class:`~types.MappingProxyType` over freshly built dicts and
+    sequences become tuples, all the way down. Two properties follow, and both
+    are the point:
+
+    **Every source mapping is read exactly once, here.** A mapping whose
+    ``__getitem__`` returns different values on successive reads is collapsed to
+    a snapshot at construction, so every later reader sees the same values. That
+    is what makes "the gate saw what ran" hold for the *values* and not merely
+    for the container identity.
+
+    **The result cannot be mutated through an alias.** The caller's original
+    containers are not retained, so a caller holding the dict it passed in cannot
+    reach into the operation afterwards.
+
+    Strings and bytes are returned as-is despite being sequences; iterating them
+    into tuples of characters would corrupt every argument in the package.
+
+    The honest limit: a value that is neither a mapping nor a list/tuple is
+    passed through unchanged. An exotic mutable object — a custom sequence type,
+    say — is therefore not frozen. Arguments are contractually JSON-serializable,
+    so that case is out of contract rather than handled, and it is stated here
+    rather than left for a reader to discover.
+    """
+    if isinstance(value, (str, bytes)):
+        return value
+    if _is_mapping(value):
+        return MappingProxyType({key: freeze(item) for key, item in dict(value).items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(freeze(item) for item in value)
+    return value
+
+
+def thaw(value: Any) -> Any:
+    """Invert :func:`freeze` into plain JSON-native containers.
+
+    :meth:`Operation.to_dict` needs this: a :class:`~types.MappingProxyType` is
+    not JSON-serializable, so a payload that carried one would fail to encode —
+    or, worse, be coerced to a string by a ``default=str`` fallback and land in
+    an evidence record as unparseable text.
+    """
+    if isinstance(value, (str, bytes)):
+        return value
+    if _is_mapping(value):
+        return {key: thaw(item) for key, item in dict(value).items()}
+    if isinstance(value, (list, tuple)):
+        return [thaw(item) for item in value]
+    return value
 
 
 class UnknownOperationKind(LookupError):
@@ -177,6 +254,29 @@ class Operation:
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
     schema_version: str = SCHEMA_VERSION
 
+    def __post_init__(self) -> None:
+        """Deep-freeze ``arguments`` and ``caller`` at construction.
+
+        This is what makes "the policy gate and the handler observe the same
+        values" a structural property rather than a remembered one. It runs on
+        *every* path that produces an ``Operation`` — the constructor,
+        :func:`dataclasses.replace` (and therefore both branches of
+        :func:`apply_rewrite`), :meth:`from_dict`, and :func:`normalize` — so
+        there is no way to obtain an operation whose arguments can still shift
+        underneath a reader.
+
+        Freezing at construction rather than inside :func:`execute` is
+        deliberate. A check placed in the pipeline protects the pipeline; a
+        constructor invariant protects every operation that exists, including
+        one a handler or a test builds directly.
+
+        ``object.__setattr__`` is how a frozen dataclass normalizes its own
+        fields; the immutability this bypasses is the very thing being
+        established.
+        """
+        object.__setattr__(self, "arguments", freeze(self.arguments))
+        object.__setattr__(self, "caller", freeze(self.caller))
+
     @property
     def requires_apply(self) -> bool:
         """Whether this operation previews unless the caller applied.
@@ -201,11 +301,13 @@ class Operation:
             "schema_version": self.schema_version,
             "id": self.id,
             "kind": self.kind,
-            "arguments": dict(self.arguments),
+            # Thawed back to JSON-native containers: the frozen forms are not
+            # serializable, and a payload is what crosses the repo boundary.
+            "arguments": thaw(self.arguments),
             "intent": None if self.intent is None else self.intent.value,
             "profile": None if self.profile is None else self.profile.value,
             "apply": self.apply,
-            "caller": dict(self.caller),
+            "caller": thaw(self.caller),
             "timeout_seconds": self.timeout_seconds,
             "max_output_bytes": self.max_output_bytes,
         }
@@ -341,6 +443,18 @@ def apply_rewrite(
     Raises :class:`RewriteRejected` otherwise. ``kind`` is checked first and
     reported on its own: a kind change is not a stricter version of the same
     mistake, it is an attempt to leave one gate's jurisdiction for another's.
+
+    **Neither path can return a live mapping.** Both construct an ``Operation``
+    (the mapping path via :func:`dataclasses.replace`, the operation path by
+    having been constructed already), so :meth:`Operation.__post_init__` has
+    deep-frozen the arguments in both cases. That matters more than it looks: a
+    rewrite is a supported extension point, and returning an operation whose
+    ``arguments`` was a *stateful* mapping — one answering differently on
+    successive reads — would otherwise let the gate read an allowed value and
+    the handler read a different one from the same object. The field-by-field
+    equality check below cannot catch that, because it compares everything
+    *except* arguments. Freezing at construction is what closes it, for the
+    top-level mapping and for arbitrary nesting depth alike.
     """
     if candidate is None:
         return operation
@@ -541,6 +655,70 @@ def _record_evidence(
     return recorded
 
 
+def _scrub_for_caller(
+    result: OperationResult,
+    secrets: Mapping[str, str] | None,
+    *,
+    reveal: bool,
+) -> OperationResult:
+    """Remove declared secrets from the result the caller receives, and say so.
+
+    The evidence record is redacted by :func:`shell.evidence.capture`; this is
+    the other half, and without it a declared secret survives in
+    ``result.evidence.stdout`` — which is precisely the field the first
+    consumer renders back to a model. Redacting the audit trail while leaving
+    the model-visible copy intact protects the wrong reader.
+
+    Whichever branch runs, the result states which one it was. A reader is never
+    left inferring redaction from the absence of something they cannot see, and
+    ``redaction_complete`` stays ``False`` throughout: an undeclared credential a
+    command printed is still in here verbatim.
+
+    Bookkeeping never overturns an outcome, so a scrubbing failure degrades the
+    evidence and keeps the operation's status — with the *unscrubbed* result
+    dropped rather than returned, because falling back to it would hand over the
+    exact value this function exists to remove.
+    """
+    if not secrets:
+        return replace(
+            result,
+            evidence=replace(result.evidence, secret_handling=SecretHandling.NONE_DECLARED),
+        )
+
+    if reveal:
+        return replace(
+            result,
+            evidence=replace(result.evidence, secret_handling=SecretHandling.REVEALED),
+        )
+
+    try:
+        scrubbed, count = Redactor(secrets=dict(secrets)).scrub_result(result)
+    except Exception as exc:  # noqa: BLE001 - a scrub failure must not leak the secret
+        reason = (
+            f"declared secrets could not be removed from this result "
+            f"({type(exc).__name__}), so its output fields were dropped rather "
+            "than returned unredacted"
+        )
+        return replace(
+            result,
+            output={},
+            rendering="",
+            evidence=replace(
+                _degraded(Evidence(), reason),
+                secret_handling=SecretHandling.REDACTED,
+            ),
+        )
+
+    return replace(
+        scrubbed,
+        evidence=replace(
+            scrubbed.evidence,
+            secret_handling=SecretHandling.REDACTED,
+            secret_replacements=count,
+        ),
+    )
+
+
 def _degraded(evidence: Evidence, reason: str) -> Evidence:
     """Mark *evidence* degraded, keeping any reason already recorded."""
     combined = f"{evidence.degraded_reason}; {reason}" if evidence.degraded_reason else reason
@@ -556,6 +734,7 @@ def execute(
     evidence_store: EvidenceStore | None = None,
     evidence_sink: Callable[[EvidenceRecord], None] | None = None,
     secrets: Mapping[str, str] | None = None,
+    reveal_secrets_in_result: bool = False,
 ) -> OperationResult:
     """Run *operation* in *environment* through the single lifecycle pipeline.
 
@@ -583,6 +762,19 @@ def execute(
     wants a durable audit trail must configure a store and is told plainly here
     that not configuring one means there is no trail.
 
+    ``secrets`` are the values to remove. They are scrubbed from **both** the
+    evidence record and the returned result: declaring a string a secret plainly
+    means "do not show it to me anywhere", and redacting only the record would
+    protect the audit trail while leaving the value the model actually reads
+    intact. No handler is given these values — they are used after the handler
+    has returned — so declaring a secret never widens what a handler can see.
+
+    ``reveal_secrets_in_result`` is the explicit opt-out, for the caller whose
+    output legitimately *is* the secret it just minted. It affects the returned
+    result only; the persisted record is redacted either way, and the result
+    reports which happened via ``evidence.secret_handling``. It is off by
+    default, so a caller who forgets it gets redaction rather than exposure.
+
     Never raises for an operation-level problem: an unknown kind, a contradictory
     intent, a rejected rewrite, or a handler that crashed all come back as a
     ``FAILED`` result. The caller is an agent loop, and a raised exception ends
@@ -601,7 +793,13 @@ def execute(
         disposition: HandlerDisposition,
     ) -> OperationResult:
         stamped = _stamp(result, environment, started_at, time.time())
-        return _record_evidence(
+        # The record is built from the UNSCRUBBED result, then the result is
+        # scrubbed for return. That ordering matters: scrubbing first would leave
+        # the record's own replacement count at zero, because there would be
+        # nothing left for it to find, and the record would understate what it
+        # had removed. The record's redaction is unconditional — the opt-out
+        # below reaches the returned result only.
+        recorded = _record_evidence(
             stamped,
             requested=operation,
             effective=effective,
@@ -611,6 +809,7 @@ def execute(
             sink=evidence_sink,
             disposition=disposition,
         )
+        return _scrub_for_caller(recorded, secrets, reveal=reveal_secrets_in_result)
 
     def _failed(message: str, effective: Operation | None) -> OperationResult:
         """A failure raised by the pipeline itself, before the handler was entered.
@@ -677,7 +876,7 @@ def execute(
                 status=OperationStatus.PREVIEWED,
                 verdict=verdict,
                 rendering=rendering,
-                output={"kind": effective.kind, "arguments": dict(effective.arguments)},
+                output={"kind": effective.kind, "arguments": thaw(effective.arguments)},
                 # No effects, and no claim of completeness: a preview describes
                 # what would run, it does not predict what would change.
                 effects=Effects(complete=False),

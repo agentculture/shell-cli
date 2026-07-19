@@ -47,13 +47,13 @@ import os
 import tempfile
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from dataclasses import replace as _replace
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping
 
-from shell.results import SCHEMA_VERSION, OperationResult
+from shell.results import REDACTION_IS_COMPLETE, SCHEMA_VERSION, OperationResult
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from shell.environment import Environment
@@ -61,6 +61,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 __all__ = [
     "DEFAULT_STORE_SUBDIR",
+    "PERSISTENCE_UNKNOWN_NOTE",
     "REDACTED",
     "REDACTION_IS_COMPLETE",
     "EvidenceRecord",
@@ -77,15 +78,29 @@ __all__ = [
 #: can see that something was removed rather than silently reading a gap.
 REDACTED = "[redacted]"
 
-#: Whether redaction can ever be claimed complete. It cannot, and this constant
-#: exists so that fact is a value in the payload rather than a line in a document
-#: someone may not have read. Nothing in this module sets it True.
-REDACTION_IS_COMPLETE = False
+# ``REDACTION_IS_COMPLETE`` is imported from ``shell.results`` and re-exported
+# here (it is in ``__all__``) so that both the persisted record and the live
+# result answer "is this clean?" from one constant rather than two that could
+# drift. It is always False. Nothing in this module sets it True.
 
 #: Where records live relative to the trusted control root. See
 #: :meth:`EvidenceStore.for_environment` for why it is anchored to the *source*
 #: root and what that does not guarantee.
 DEFAULT_STORE_SUBDIR = Path(".shell") / "evidence"
+
+#: Carried in the on-disk body's ``persistence.note``, where ``persisted`` is
+#: null. A record is the thing being written, so it cannot contain the outcome of
+#: its own write — the value is not known until after the bytes are placed. The
+#: note states the one inference a reader IS entitled to make, so that a null
+#: reads as a described limit rather than as missing data.
+PERSISTENCE_UNKNOWN_NOTE = (
+    "This body was serialized before its own write completed, so it cannot "
+    "attest to that write's outcome. If you are reading this record from an "
+    "evidence store, the write succeeded — that is what its presence means. The "
+    "in-memory record returned by capture() carries the resolved outcome; the "
+    "persisted body deliberately does not, because filling it in would require "
+    "either a second write or an edit after the first, and both risk a torn file."
+)
 
 
 class HandlerDisposition(str, Enum):
@@ -215,6 +230,13 @@ class Redactor:
         Dictionary *keys* are scrubbed as well as values. A caller that used a
         secret as a key would otherwise leak it through the structure itself.
         """
+        # Enum members first, and specifically before the ``str`` branch: this
+        # package's enums subclass ``str``, so scrubbing one would silently
+        # demote ``OperationStatus.SUCCEEDED`` to a bare string and break every
+        # identity comparison downstream. An enum member is a fixed vocabulary
+        # term, never a place a secret can be.
+        if isinstance(value, Enum):
+            return value, 0
         if isinstance(value, str):
             return self.scrub_text(value)
         if isinstance(value, Mapping):
@@ -235,6 +257,68 @@ class Redactor:
                 total += item_count
             return items, total
         return value, 0
+
+    def _scrub_dataclass(self, obj: Any) -> tuple[Any, int]:
+        """Scrub every field of a frozen dataclass, preserving each field's type.
+
+        Field-by-field rather than through ``to_dict``: the result is handed back
+        to a caller as typed objects, so a round-trip through a plain mapping
+        would return the wrong thing. Tuple fields are rebuilt as tuples because
+        :meth:`scrub` normalizes every sequence to a list.
+
+        Nested dataclasses fall through :meth:`scrub` untouched and are scrubbed
+        by :meth:`scrub_result`, which knows which ones exist.
+        """
+        changes: dict[str, Any] = {}
+        total = 0
+        for spec in fields(obj):
+            current = getattr(obj, spec.name)
+            scrubbed, count = self.scrub(current)
+            if not count:
+                continue
+            changes[spec.name] = tuple(scrubbed) if isinstance(current, tuple) else scrubbed
+            total += count
+        return (_replace(obj, **changes) if changes else obj), total
+
+    def scrub_result(self, result: OperationResult) -> tuple[OperationResult, int]:
+        """Return *result* with declared secrets removed from every string in it.
+
+        This is the live-result counterpart of :func:`build_record`'s redaction,
+        and it exists because redacting only the record protects the audit trail
+        while leaving the value the model actually reads untouched. The first
+        consumer renders ``result`` output back to the model, so that was the
+        exact path a declared secret would have travelled.
+
+        Every string-bearing surface is covered — captured stdout and stderr, the
+        rendering, the error, the structured output payload, the policy reason,
+        and the effect lists — because "I declared this a secret" plainly means
+        "do not show it to me anywhere", and a field-by-field allow-list would be
+        a list someone forgets to extend.
+
+        Byte counts and digests are deliberately **not** recomputed.
+        ``stdout_bytes`` describes the stream as produced, which is a fact about
+        the world rather than about this copy of it, and a length that shifted to
+        match the placeholder would misreport what the process actually wrote.
+        """
+        if not self._ordered_values():
+            return result, 0
+
+        total = 0
+        evidence, count = self._scrub_dataclass(result.evidence)
+        total += count
+        verdict, count = self._scrub_dataclass(result.verdict)
+        total += count
+        effects, count = self._scrub_dataclass(result.effects)
+        total += count
+        # The nested dataclasses above are invisible to ``scrub`` and therefore
+        # pass through this call unchanged; it covers output, rendering and error.
+        scrubbed, count = self._scrub_dataclass(result)
+        total += count
+
+        return (
+            _replace(scrubbed, evidence=evidence, verdict=verdict, effects=effects),
+            total,
+        )
 
 
 # --- retention --------------------------------------------------------------
@@ -580,6 +664,16 @@ class EvidenceStore:
     def _filename(self, record: EvidenceRecord) -> str:
         return f"{float(record.body['recorded_at']):.6f}-{record.record_id}.json"
 
+    def path_for(self, record: EvidenceRecord) -> Path:
+        """Where *record* would be written. Derived, not reserved — nothing is created.
+
+        Public because :func:`capture` needs the destination *before* the write,
+        so that the body it persists can name its own intended path. The
+        filename depends only on ``recorded_at`` and ``record_id``, so adding a
+        persistence block to a record does not move it.
+        """
+        return self.directory / self._filename(record)
+
     def write(self, record: EvidenceRecord) -> WriteOutcome:
         """Persist *record* atomically. Never raises — failure is a return value.
 
@@ -725,32 +819,65 @@ def capture(
     if store is not None and environment is not None:
         outside_work_root = not _is_within(store.directory, Path(environment.work_root))
 
-    def _with_persistence(outcome: WriteOutcome, reason: str) -> EvidenceRecord:
+    def _with_persistence(
+        *,
+        persisted: bool | None,
+        path: Path | None,
+        reason: str,
+        write_attempted: bool,
+    ) -> EvidenceRecord:
         """Return a new record carrying its own persistence block.
 
         A new record rather than a mutation: :class:`EvidenceRecord` is frozen,
         and a caller holding the pre-write record must not see it change under
         them because a write happened afterwards.
+
+        ``persisted`` is three-valued for a structural reason, not a stylistic
+        one — see :data:`PERSISTENCE_UNKNOWN_NOTE`.
         """
         return EvidenceRecord(
             body={
                 **record.body,
                 "persistence": {
-                    "persisted": outcome.ok,
-                    "path": None if outcome.path is None else str(outcome.path),
+                    "persisted": persisted,
+                    "path": None if path is None else str(path),
                     "reason": reason,
+                    "write_attempted": write_attempted,
                     # Whether the record landed outside the tree the operation
                     # itself could write to. None when that is not determinable.
                     "store_outside_work_root": outside_work_root,
+                    "note": "" if persisted is not None else PERSISTENCE_UNKNOWN_NOTE,
                 },
             }
         )
 
     if store is None:
-        return result, _with_persistence(WriteOutcome(ok=False), "no evidence store was configured")
+        return result, _with_persistence(
+            persisted=False,
+            path=None,
+            reason="no evidence store was configured",
+            write_attempted=False,
+        )
 
-    outcome = store.write(record)
-    persisted = _with_persistence(outcome, outcome.error)
+    # The body is given its persistence block BEFORE the write, so the bytes on
+    # disk carry every section this record's contract documents. Its own
+    # ``persisted`` is null there, because a body cannot attest to the success of
+    # the write that is placing it — and the alternative, a second write or an
+    # edit after the first, would trade a documentation gap for a torn file.
+    target = store.path_for(record)
+    pending = _with_persistence(
+        persisted=None,
+        path=target,
+        reason="",
+        write_attempted=True,
+    )
+    outcome = store.write(pending)
+    persisted = _with_persistence(
+        persisted=outcome.ok,
+        path=outcome.path or target,
+        reason=outcome.error,
+        write_attempted=True,
+    )
     if outcome.ok:
         return result, persisted
 

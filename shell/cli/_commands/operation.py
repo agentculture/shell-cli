@@ -28,17 +28,17 @@ posture the rest of this package uses:
   problem is with the environment (a broken or inaccessible store path), not
   with what the caller typed.
 
-**A finding surfaced while building this verb, not fixed here because
-``shell/evidence.py`` is not this slice's to change:** the ``persistence``
-block ``docs/evidence-contract.md`` documents as a top-level part of "the
-record" is only ever added to the **in-memory** :class:`~shell.evidence.EvidenceRecord`
-:func:`shell.evidence.capture` returns to a direct caller or an
-``evidence_sink``. :meth:`~shell.evidence.EvidenceStore.write` persists the
-*pre-persistence* record to disk before the write outcome exists to describe,
-and nothing re-writes the file afterwards. A record this command retrieves
-from disk therefore almost never carries a ``persistence`` key at all. See
-:func:`_persistence_line` for how that gap is reported rather than papered
-over.
+**A finding surfaced while building this verb has since been fixed in
+``shell/evidence.py``:** the ``persistence`` block that
+``docs/evidence-contract.md`` documents as a top-level part of "the record"
+used to be added only to the **in-memory**
+:class:`~shell.evidence.EvidenceRecord`, so a body read back from disk was
+missing a documented section entirely. The block is now written as part of the
+persisted body. The one field it still cannot carry is its own ``persisted``
+outcome — a record is serialized before the write that places it completes — so
+that field is ``null`` on disk with a note saying why, and resolved only on the
+record :func:`shell.evidence.capture` returns. See :func:`_persistence_line`,
+which renders all three shapes without letting a null read as a boolean.
 """
 
 from __future__ import annotations
@@ -146,31 +146,37 @@ def _find_record(directory: Path, operation_id: str) -> dict[str, Any]:
 
 
 def _persistence_line(record: dict[str, Any]) -> str:
-    """Render the ``persistence`` block, honestly, when the on-disk body lacks one.
+    """Render the ``persistence`` block, honestly, in all three shapes it can take.
 
     A record found by this command was, by construction, read from a file that
     exists — so it was written. That is not the same claim as the record's own
-    ``persistence.persisted`` field, and the two currently diverge: ``EvidenceStore.write``
-    (``shell/evidence.py``) persists ``record`` to disk *before* the write
-    outcome is known, so the ``persistence`` block ``capture()`` builds
-    afterwards — the one ``docs/evidence-contract.md`` documents as a top-level
-    block of "the record" — is added only to the in-memory copy handed to a
-    direct caller or ``evidence_sink``, never re-written back to the file this
-    command reads. So a record retrieved here almost always has no
-    ``persistence`` key at all, and that must not be misreported as
-    ``persisted: None`` (which reads as "unknown or false" to a caller
-    skimming for a boolean). Displaying the honest reason is safer than
-    filling the gap with a value this module cannot actually verify.
+    ``persistence.persisted`` field, and the two cannot be made identical: a
+    record is the thing being written, so its body is serialized before the
+    outcome of that write exists to describe. ``shell/evidence.py`` therefore
+    stores ``persisted: null`` with a note rather than omitting the block or
+    asserting a success it cannot yet know.
+
+    A bare ``persisted: None`` would read as "unknown or false" to a caller
+    skimming for a boolean, so the null case renders the reason instead of the
+    value. The missing-block case is kept for records written by an earlier
+    version, whose bodies genuinely have no ``persistence`` key at all.
     """
     persistence = record.get("persistence")
-    if persistence is not None:
-        return f"  persisted: {persistence.get('persisted')} path={persistence.get('path')}"
-    return (
-        "  persisted: (this record's stored body has no persistence block -- "
-        "EvidenceStore.write() persists a record before its own write outcome "
-        "is known, so a successful write never carries this field back to disk; "
-        "being retrievable here is itself the evidence that it was written)"
-    )
+    if persistence is None:
+        return (
+            "  persisted: (this record's stored body has no persistence block -- "
+            "it was written by a version that added the block only to the "
+            "in-memory copy; being retrievable here is itself the evidence that "
+            "it was written)"
+        )
+    if persistence.get("persisted") is None:
+        return (
+            f"  persisted: (not recorded in the stored body -- a record is "
+            f"serialized before its own write completes, so it cannot attest to "
+            f"that write; being retrievable here is itself the evidence that it "
+            f"was written) path={persistence.get('path')}"
+        )
+    return f"  persisted: {persistence.get('persisted')} path={persistence.get('path')}"
 
 
 def _render_text(record: dict[str, Any]) -> str:

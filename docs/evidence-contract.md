@@ -7,12 +7,12 @@ what it does *not* guarantee.
 
 Implementation: `shell/evidence.py`. Tests: `tests/test_evidence.py`.
 
-> **Status.** Contract-level, tested against synthetic results. The record shape,
-> redaction scope, versioning, storage and degraded-write behaviour are real and
-> enforced by tests. What is *not* yet real is a producer: no runner populates
-> these fields from a live process, because process execution has not been built.
-> Read this as the shape evidence will take, already pinned, not as a description
-> of a running system.
+> **Status.** Real and produced. The record shape, redaction scope, versioning,
+> storage and degraded-write behaviour are enforced by tests, and `process.exec` /
+> `process.shell` now populate these fields from live processes through
+> `HostRunner` — `tests/test_process_shell.py` exercises the path with real
+> commands. What is still absent is the container runner, so every
+> `environment.isolation` you will see today reads `none`.
 
 ## Why evidence is a product surface
 
@@ -45,8 +45,15 @@ One JSON object per operation. Top-level blocks:
 | `effects` | `changed_paths`, `bytes_written`, `git_refs`, `created_resources`, `complete` |
 | `redaction` | `secret_names`, `replacements`, `placeholder`, `complete`, `scope` |
 | `evidence_quality` | `degraded`, `degraded_reason` |
-| `persistence` | `persisted`, `path`, `reason`, `store_outside_work_root` |
+| `persistence` | `persisted`, `path`, `reason`, `write_attempted`, `store_outside_work_root`, `note` |
 | `integrity` | `algorithm`, `content_sha256` |
+
+Every block above is present in the **persisted bytes**, not only in the
+in-memory record. `tests/test_evidence.py::test_a_record_read_back_off_disk_has_every_documented_block`
+writes a record, reads it back off disk, and compares its key set to this table.
+That round-trip exists because its absence hid a real divergence: every other
+assertion inspected the in-memory record, and a persisted body missing an entire
+documented section went unnoticed until a CLI verb tried to read one.
 
 ### Both operations are recorded
 
@@ -154,22 +161,81 @@ whether the record described the world accurately.
 
 This is the section to read before trusting a record.
 
+### Two representations, both scrubbed
+
+An operation produces two things a secret can survive in, and they are redacted
+independently:
+
+| Representation | What it is | Redacted by |
+|---|---|---|
+| the **evidence record** | the durable JSON body, in memory and on disk | `build_record`, always |
+| the **`OperationResult`** | the live object returned from `execute` | `execute`, by default |
+
+**Both are scrubbed by default, and that is not a redundancy.** Redacting only
+the record protects an auditor reading the trail after the fact, while leaving
+the value the *model* reads intact — colleague's `run_command` adapter renders
+result output back to the model, so the unscrubbed result was the one path a
+declared secret was guaranteed to travel. Protecting the record alone protects
+the reader who was never at risk.
+
 ### Redacted
 
 **Declared secret values, everywhere they appear.** A caller passes
-`secrets={"API_TOKEN": "..."}` to `capture()`; every occurrence of that value is
-replaced with `[redacted]` throughout the entire record body — captured output,
-operation arguments, renderings, error messages, policy reasons, and dictionary
-*keys*. The whole body is walked. There is no field list a declared secret can
-hide behind, and `tests/test_evidence.py` pins that.
+`secrets={"API_TOKEN": "..."}` to `execute()` (or `capture()` directly); every
+occurrence of that value is replaced with `[redacted]` throughout the entire
+record body and throughout the returned result — captured stdout and stderr,
+operation arguments, structured output, renderings, error messages, policy
+reasons, effect lists, and dictionary *keys*. There is no field list a declared
+secret can hide behind; `tests/test_evidence.py` and
+`tests/test_redaction_boundary.py` pin each side.
 
 Secret **names** are recorded. Secret **values** never are, in any field, at any
 time. This matches `Environment.secret_names`, which likewise holds names only.
 
+**No handler is ever given a secret value.** Redaction runs after the handler has
+returned, so declaring a secret is not a way to hand one to project code. The
+handler signature takes an operation and an environment, and there is nowhere for
+a value to arrive — pinned by `test_secrets_never_reach_a_handler`.
+
+Byte counts and digests are **not** recomputed after scrubbing. `stdout_bytes`
+describes the stream as the process produced it, which is a fact about the world
+rather than about this copy of it; a length shifted to match the placeholder
+would misreport what actually ran.
+
+### The one opt-out, and what it does not reach
+
+Some output legitimately *is* the secret — a command that mints a token has to be
+able to hand it back. `execute(..., reveal_secrets_in_result=True)` leaves
+declared secrets in the returned result.
+
+Three properties make that safe to offer:
+
+- **It is off by default.** A caller who forgets it gets redaction, never
+  exposure. `test_the_opt_in_defaults_to_off` asserts the default itself, so
+  changing it means walking past an assertion about the change.
+- **It never reaches the record.** The persisted evidence is redacted either way.
+  A caller can see a minted token live; the durable audit trail still must not
+  hold it. This asymmetry is the whole reason the flag can exist.
+- **It is recorded as a choice.** `evidence.secret_handling` reports `revealed`,
+  so an exposure is never indistinguishable from an ordinary run.
+
+`evidence.secret_handling` is three-valued for the same reason `applied` is:
+
+| Value | Meaning |
+|---|---|
+| `none_declared` | No secrets were passed. Nothing was checked. |
+| `redacted` | Declared values were removed from this result. |
+| `revealed` | Declared values were left in place because the caller asked. |
+
+Collapsing `none_declared` and `revealed` into one "not redacted" boolean would
+make a deliberate opt-in indistinguishable from a run that never had secrets.
+
 ### Not redacted
 
 **Anything that was not declared.** A command that prints a credential nobody
-handed to `capture()` writes that credential into the record verbatim.
+declared writes that credential into the record **and into the result**,
+verbatim. Scrubbing the live result closed a gap in *coverage*; it did not widen
+the *guarantee*. Only declared values are removed, on both sides.
 
 No pattern heuristics are applied — no "looks like an AWS key", no entropy
 threshold. That is a considered choice, not an omission. A scanner catching *some*
@@ -177,16 +243,20 @@ undeclared secrets would invite callers to stop declaring them and trust the
 scanner instead, converting a visible gap into an invisible one. The gap is worse
 when nobody can see it.
 
-`tests/test_evidence.py::test_undeclared_secret_is_NOT_redacted` asserts the leak
-directly, so that anyone who later claims broader coverage has to edit a test that
-states the limitation in writing.
+`tests/test_evidence.py::test_undeclared_secret_is_NOT_redacted` and
+`tests/test_redaction_boundary.py::test_an_undeclared_secret_is_still_present_in_both_representations`
+assert the leak directly, so that anyone who later claims broader coverage has to
+edit a test that states the limitation in writing.
 
-### The record never claims to be clean
+### Neither representation claims to be clean
 
-`redaction.complete` is always `false`. It is wired to the module constant
-`REDACTION_IS_COMPLETE`, and no input can flip it — declaring every secret that
-appears in the output still leaves it `false`, because completeness would be a
-claim about secrets nobody declared, which is unknowable here.
+`redaction.complete` on the record and `evidence.redaction_complete` on the result
+are both always `false`. Both read from one constant —
+`shell.results.REDACTION_IS_COMPLETE`, which `shell.evidence` re-exports rather
+than copying — so the two cannot drift into disagreeing. No input can flip either:
+declaring every secret that appears in the output still leaves them `false`,
+because completeness would be a claim about secrets nobody declared, which is
+unknowable here.
 
 This follows the precedent `Environment.network_enforced` set: a declared control
 the code cannot actually deliver is reported as undelivered rather than implied.
@@ -214,6 +284,40 @@ One file per record rather than an appended log: pruning by age is a file listin
 instead of a rewrite, and a write that fails partway corrupts nothing already
 recorded. Writes are atomic — a temporary file in the destination directory,
 moved into place — so a reader never observes a half-written record.
+
+### A record cannot attest to its own write
+
+The `persistence` block is part of the persisted body, so a reader off disk finds
+every documented section. One field inside it is `null` there, and cannot be
+otherwise: **`persisted` is not known when the bytes are serialized**, because the
+record *is* what is being written.
+
+| Field | On disk | On the returned record |
+|---|---|---|
+| `path` | the destination, computed before the write | the same path |
+| `write_attempted` | `true` | `true` |
+| `store_outside_work_root` | resolved | resolved |
+| `persisted` | `null`, with `note` explaining why | `true` / `false` |
+| `reason` | empty | the failure text, when one occurred |
+
+Three options were available and two of them are dishonest. Omitting the block
+leaves a reader silently missing a documented section — that was the previous
+behaviour, and `shell operation show` tripped over it. Writing `persisted: true`
+before knowing it is a claim about the future. Reporting `null` with a stated
+reason is the same posture `execution.applied` and `effects.complete` take
+elsewhere: a thing the code cannot know is reported as unknown.
+
+**The gap is not closed by writing twice.** A second write, or an edit after the
+first, would trade a documentation gap for a torn-file hazard — and the atomicity
+above is worth more than filling in a field a reader can already infer. If you are
+reading a record *from* a store, the write succeeded; that is what its presence
+means, and `PERSISTENCE_UNKNOWN_NOTE` says so in the payload.
+
+One consequence for validators: the on-disk body and the returned record have
+different `persistence` blocks and therefore **different `integrity.content_sha256`
+values**. That is correct — they are different bodies. Each digest validates
+against the bytes it accompanies, which is the property that matters, and
+`test_the_stored_bodys_digest_validates_against_its_own_bytes` pins it.
 
 ## Retention
 
@@ -278,8 +382,12 @@ an error message.
   to `false`. A host process may write anywhere it can reach, and nothing at this
   layer will enumerate that. Only a handler that performed every mutation itself
   and can name them all may set it true.
-- **It does not claim redaction is complete.** See above; `redaction.complete` is
-  permanently `false`.
+- **It does not claim redaction is complete.** See above; `redaction.complete` and
+  `evidence.redaction_complete` are permanently `false`. Declared secrets are
+  removed from both the record and the live result; undeclared ones are removed
+  from neither.
+- **It does not claim the stored body knows whether it was stored.**
+  `persistence.persisted` is `null` on disk, by construction.
 - **It does not claim the record is a security boundary.** An operation running on
   the host can reach the evidence directory like any other directory. Anchoring
   the store to the source root raises the bar for an accidental overwrite; it is

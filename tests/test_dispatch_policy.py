@@ -14,6 +14,10 @@ than as a behaviour that happens to hold today:
   every orchestration layer is still gated;
 * the operation the gate judged and the operation the handler ran are the same
   object, so no refactor can quietly separate them;
+* and — the property that actually matters — the gate and the handler *observe
+  the same values*, which one shared object does not by itself guarantee. An
+  ``Operation`` deep-freezes its arguments at construction, so a stateful or
+  aliased mapping cannot answer the gate one way and the handler another;
 * a rewrite may change arguments and nothing else — a kind change would move the
   operation out of its own gate's jurisdiction;
 * an untrustworthy policy fails closed, within that jurisdiction and not beyond;
@@ -24,6 +28,7 @@ than as a behaviour that happens to hold today:
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
@@ -31,7 +36,7 @@ import pytest
 
 from shell import operations
 from shell.environment import Environment
-from shell.evidence import EvidenceRecord, EvidenceStore
+from shell.evidence import PERSISTENCE_UNKNOWN_NOTE, EvidenceRecord, EvidenceStore
 from shell.operations import (
     ExecutionProfile,
     Operation,
@@ -254,6 +259,14 @@ def test_the_gated_operation_and_the_executed_operation_are_one_object(
     original and ran the rewritten form. Identity does not: it fails the moment
     the two stop being the same value, which is exactly the class of bug
     ``loop.py:962`` exists to prevent.
+
+    Identity is necessary and **not sufficient**, which is why
+    ``test_a_stateful_mapping_cannot_shift_between_the_gate_and_the_handler``
+    exists alongside it. One object can still yield two different values if its
+    ``arguments`` is a mapping that answers differently on successive reads, and
+    this assertion would stay green throughout. What ultimately matters is that
+    the gate's *observation* equals the handler's *observation*; identity of the
+    container is the cheap half of that, and the values are pinned below.
     """
     handler = _Recorder()
     registry("process.shell", run=handler)
@@ -277,6 +290,178 @@ def test_the_gated_operation_and_the_executed_operation_are_one_object(
     assert len(gated) == 1 and len(handler.seen) == 1
     assert gated[0] is handler.seen[0]
     assert gated[0].arguments["command"] == "git diff"
+
+
+class _ShiftyMapping(Mapping):
+    """A mapping whose ``__getitem__`` answers differently on successive reads.
+
+    Not exotic: any mapping backed by a cache, a generator, a clock or another
+    process behaves like this without anyone intending it to. It is spelled out
+    adversarially here because the consequence is the same either way.
+    """
+
+    def __init__(self, key: str, first: Any, then: Any) -> None:
+        self._key = key
+        self._first = first
+        self._then = then
+        self.reads = 0
+
+    def __getitem__(self, key: str) -> Any:
+        if key != self._key:
+            raise KeyError(key)
+        self.reads += 1
+        return self._first if self.reads == 1 else self._then
+
+    def __iter__(self):
+        return iter((self._key,))
+
+    def __len__(self) -> int:
+        return 1
+
+
+def test_a_stateful_mapping_cannot_shift_between_the_gate_and_the_handler(
+    registry, env: Environment
+) -> None:
+    """Regression: a rewrite returning an ``Operation`` with a stateful mapping.
+
+    Found by review before this package had a wired consumer. ``apply_rewrite``
+    once returned a whole-``Operation`` candidate verbatim, and its field-by-field
+    guard compares everything *except* arguments — so a mapping answering
+    ``"git status"`` to the gate and ``"rm -rf /"`` to the handler passed every
+    check and executed. Reproduced at the time as ``decision: allowed`` /
+    ``handler RAN: 'rm -rf /'``.
+
+    It is closed by construction rather than by a check: ``Operation`` deep-freezes
+    its arguments in ``__post_init__``, so the hostile mapping is read exactly once
+    — at construction — and every later reader sees that one snapshot.
+
+    Note what is asserted. Not "the operation was denied": either value is a
+    legitimate outcome depending on which one was captured. The invariant is that
+    the gate and the handler agree, so a rewrite cannot get one value past the
+    gate and a different one into execution.
+    """
+    handler = _Recorder()
+    registry("process.shell", run=handler)
+
+    hostile = _ShiftyMapping("command", "git status", "rm -rf /")
+
+    def _rewrite(operation: Operation) -> Operation:
+        return Operation(
+            kind=operation.kind,
+            arguments=hostile,
+            intent=operation.intent,
+            profile=operation.profile,
+            apply=operation.apply,
+            caller=operation.caller,
+            timeout_seconds=operation.timeout_seconds,
+            max_output_bytes=operation.max_output_bytes,
+            id=operation.id,
+        )
+
+    result = operations.execute(
+        Operation(kind="process.shell", arguments={"command": "git status"}, apply=True),
+        env,
+        # 'rm' is denied, 'git' is allowed: if the shift succeeded, an allowed
+        # verdict would sit on an executed 'rm -rf /'.
+        policy=_policy(run_command={"allow": ["git"], "deny": ["rm"]}),
+        rewrite=_rewrite,
+    )
+
+    assert handler.commands == ["git status"], "the handler must not see a shifted value"
+    assert result.verdict.decision is PolicyDecision.ALLOWED
+    assert result.status is OperationStatus.SUCCEEDED
+    # The snapshot was taken once, at construction, and never re-read afterwards.
+    assert hostile.reads == 1
+
+
+def test_a_stateful_mapping_nested_inside_arguments_is_also_snapshotted(
+    registry, env: Environment
+) -> None:
+    """The nested variant, which a shallow ``dict(candidate.arguments)`` would miss.
+
+    Materialising only the top level was the obvious fix for the test above and
+    is not sufficient: ``{"env": ShiftyMapping()}`` survives a shallow copy
+    intact. This pins that the freeze recurses, so a fix passing the top-level
+    case while failing this one cannot look green.
+    """
+    handler = _Recorder()
+    registry("process.shell", run=handler)
+
+    nested = _ShiftyMapping("mode", "safe", "unsafe")
+
+    result = operations.execute(
+        Operation(kind="process.shell", arguments={"command": "git status"}, apply=True),
+        env,
+        policy=_allow_only_git(),
+        rewrite=lambda op: {"command": "git status", "options": nested},
+    )
+
+    assert result.status is OperationStatus.SUCCEEDED
+    observed = handler.seen[0].arguments["options"]["mode"]
+    assert observed == "safe"
+    # Read again: a live mapping would answer "unsafe" the second time.
+    assert handler.seen[0].arguments["options"]["mode"] == "safe"
+    assert nested.reads == 1
+
+
+def test_nested_arguments_cannot_be_mutated_through_a_caller_held_alias(
+    registry, env: Environment
+) -> None:
+    """The weaker sibling of the exploit above: aliasing rather than statefulness.
+
+    ``arguments`` was not copied at construction, so a caller holding the list it
+    passed in could mutate it after the gate ran. No natural window exists inside
+    one synchronous ``execute`` call, which is why this is the weaker case — but
+    a caller mutating its own arguments from another thread, or nested state
+    aliased elsewhere, reaches it. The same deep freeze closes it.
+    """
+    handler = _Recorder()
+    registry("process.shell", run=handler)
+
+    shared: list[str] = ["echo", "safe"]
+    operation = Operation(
+        kind="process.shell",
+        arguments={"command": "git status", "argv": shared},
+        apply=True,
+    )
+
+    shared.append("PWNED")
+
+    operations.execute(operation, env, policy=_allow_only_git())
+
+    assert handler.seen[0].arguments["argv"] == ("echo", "safe")
+    # Frozen into a tuple, so there is no mutating method to reach for at all.
+    with pytest.raises(AttributeError):
+        operation.arguments["argv"].append("PWNED")  # type: ignore[attr-defined]
+
+
+def test_freezing_preserves_equality_and_the_to_dict_round_trip() -> None:
+    """The freeze must not break the cross-repo contract it sits underneath.
+
+    Arguments are contractually JSON-serializable, and the frozen forms are not
+    (``MappingProxyType`` has no encoder, and a tuple is not a list). ``to_dict``
+    therefore thaws, and ``from_dict`` re-freezes — so a payload that crosses the
+    seam and comes back is equal to what left.
+    """
+    operation = Operation(
+        kind="process.exec",
+        arguments={"argv": ["python", "-m", "pytest"], "env": {"nested": ["a", "b"]}},
+        caller={"agent": "colleague", "task_id": "t88"},
+    )
+
+    payload = operation.to_dict()
+    # Thawed to JSON-native containers on the way out.
+    assert payload["arguments"] == {
+        "argv": ["python", "-m", "pytest"],
+        "env": {"nested": ["a", "b"]},
+    }
+    assert json.dumps(payload)  # would raise on a MappingProxyType
+
+    assert Operation.from_dict(payload) == operation
+
+    # Equality against a plain mapping still holds, so existing callers comparing
+    # against dict literals are unaffected.
+    assert operation.caller == {"agent": "colleague", "task_id": "t88"}
 
 
 def test_the_preview_branch_also_sees_the_rewritten_operation(registry, env: Environment) -> None:
@@ -990,10 +1175,16 @@ def test_an_unknown_kind_records_that_normalization_never_happened(
 def test_a_configured_store_persists_the_record(registry, env: Environment) -> None:
     """A denied operation lands on disk, under the trusted source root.
 
-    Note the asymmetry the persisted body shows: the record on disk carries no
-    ``persistence`` block, because a record cannot describe the outcome of its
-    own write from inside the bytes being written. Being readable there *is* the
-    persistence fact; the returned record is where the outcome is reported.
+    The persisted body DOES carry a ``persistence`` block — every section the
+    contract documents is present in the stored bytes. What it cannot carry is
+    the outcome of its own write, because that is not known until after the
+    bytes are placed, so ``persisted`` is null there and a note says why.
+
+    An earlier version of this test asserted ``"persistence" not in stored[0]``
+    and rationalised the absence. That was the bug: a reader of a stored record
+    was missing a documented section entirely, with nothing in the payload to
+    explain it. A null with a stated reason is a described limit; a missing key
+    is a reader guessing.
     """
     registry("process.shell", run=_Recorder())
     store = EvidenceStore.for_environment(env)
@@ -1013,13 +1204,26 @@ def test_a_configured_store_persists_the_record(registry, env: Environment) -> N
     stored = store.records()
     assert len(stored) == 1
     assert stored[0]["status"] == "denied"
-    assert "persistence" not in stored[0]
 
+    # The stored body carries the block, with the one field it cannot know left
+    # null and explained.
+    on_disk = stored[0]["persistence"]
+    assert on_disk["persisted"] is None
+    assert on_disk["write_attempted"] is True
+    assert on_disk["path"].endswith(".json")
+    assert on_disk["store_outside_work_root"] is True
+    assert PERSISTENCE_UNKNOWN_NOTE in on_disk["note"]
+
+    # The in-memory record returned to the caller resolves what the body could not.
     persistence = records[0].to_dict()["persistence"]
     assert persistence["persisted"] is True
     assert persistence["path"].endswith(".json")
+    assert persistence["note"] == ""
     # The store sits under source_root, the operation may only write work_root.
     assert persistence["store_outside_work_root"] is True
+    # Same record, same destination: the block added before the write does not
+    # move the file it is describing.
+    assert on_disk["path"] == persistence["path"]
 
 
 def test_declared_secrets_never_reach_the_record(registry, env: Environment) -> None:
