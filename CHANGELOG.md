@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/). This project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.2] - 2026-07-19
+
+### Added
+
+- scripts/colleague_inventory.py is now tracked: a pure-stdlib AST scanner that inventories colleagues process-spawn paths, pinned to colleague SHA 28fee29 (1.51.0).
+- CI inventory-gate job: clones the public colleague repo at the pinned SHA, asserts it scanned that exact commit, publishes debt_remaining to the step summary and as a notice on every run, then fails on any unclassified spawn path.
+- tests/test_colleague_inventory.py: 17 tests driving the scanner against synthetic fixtures, so the gate is provable in CI without a colleague checkout.
+
+### Changed
+
+- colleague_inventory.py now reports a missing or unreadable checkout as an environment error (exit 2) rather than raising SystemExit, so CI can distinguish a broken clone from a real gate failure.
+
 ## [0.8.1] - 2026-07-19
 
 ### Added
